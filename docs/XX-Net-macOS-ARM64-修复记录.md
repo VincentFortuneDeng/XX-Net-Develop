@@ -134,6 +134,12 @@ TLS implementation: BoringSSL
 | TLS 指纹 | 老旧，易被 GFW 识别 | 模拟 Chrome，GFW 无法识别 |
 | 连接稳定性 | 极差 | 正常（与 Windows 一致） |
 
+### 背景注记（2026-10-27 补充，arm64 原生库来源与钉定依据）
+
+- **官方包内不含任何 TLS 库（实证）**：官方 5.16.7 包（`upstream/XX-Net-5.16.7.zip` 解包核验）内没有 `python3.zip`、没有 `lib/darwin/`、没有任何 BoringSSL 二进制；"原生支持 ARM64" 仅指程序可用系统 Python 运行。本节上表描述的 Rosetta + python3.zip 方案只适用于 5.16.6 时代，5.16.7 起 arm64 原生 `boringssl.abi3.so` 需用户侧自行提供并放入 `code/default/lib/darwin/`。
+- **arm64 库来源与钉定依据**：当前部署的 `boringssl.abi3.so`（shasum `ebebfc77…`）按 pyBoringSSL 钉定三元组构建（主仓库 `01d935f` / boringssl `5e4925c` / brotli `d35319e`），构建配方见 `boringssl-arm64/BUILD-macOS-ARM64.md`。该钉定经三重实证：Q0 两架构符号对照（交集 99.8%）、Q1-Q2 源码树逐文件比对（零差异）、Q3 四级证据链含金标准重建（符号 0 缺失、独立进程加载两库指纹逐字段一致）。完整验证数据见 BUILD 文档「源码-产物匹配性验证（2026-10-27）」章节；演进脉络见 `XX-Net-版本演进时间线.md` 第四、五、六、八章。
+- 注意：主仓库默认 boringssl gitlink 为 `e8ece8ec`（与钉定的 `5e4925c` 分叉），重建时必须按 BUILD 文档人工钉定，勿依赖 submodule 默认指针。
+
 ---
 
 ## 问题四：proxy_session.py 中误加 watchdog 线程
