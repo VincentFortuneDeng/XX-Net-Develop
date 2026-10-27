@@ -1,0 +1,6 @@
+[submodule "boringssl"]
+	path = boringssl
+	url = https://github.com/XX-net/boringssl.git
+[submodule "brotli"]
+	path = brotli
+	url = https://github.com/XX-net/brotli.git

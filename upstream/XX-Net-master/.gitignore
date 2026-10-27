@@ -1,0 +1,26 @@
+.idea
+/data*
+*~
+*.pyc
+*.swp
+*.pot
+*.mo
+*.xpi
+*pybabel_update.sh
+core
+.DS_Store
+desktop.ini
+/SwitchyOmega/AutoProxy.xpi
+/SwitchyOmega/SwitchyOmega.crx
+/code/default/gae_proxy/server/lib/
+/code/default/gae_proxy/local/ipv6_tunnel/enable_ipv6_temp.bat
+/code/default/gae_proxy/local/ipv6_tunnel/set_best_server_temp.bat
+.pytest_cache
+*.log
+code/version.txt
+
+
+# Babel files
+messages.po-e
+messages.pot
+translated.po

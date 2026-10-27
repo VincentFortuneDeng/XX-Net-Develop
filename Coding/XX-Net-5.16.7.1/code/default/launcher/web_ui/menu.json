@@ -1,0 +1,22 @@
+{
+  "module_title": "{{ _( "System" ) }}",
+  "menu_sort_id": 100,
+  "sub_menus": {
+     "2":{
+       "title": "{{ _( "Configuration" ) }}",
+       "url": "config"
+     },
+     "3":{
+       "title": "{{ _( "About" ) }}",
+       "url": "about"
+     },
+     "4":{
+       "title": "{{ _("Log") }}",
+       "url": "logging"
+     },
+     "5":{
+       "title": "{{ _( "Exit" ) }}",
+       "api_url": "/quit"
+     }
+  }
+}

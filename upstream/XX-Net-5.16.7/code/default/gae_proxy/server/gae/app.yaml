@@ -1,0 +1,8 @@
+instance_class: F1
+automatic_scaling:
+  max_instances: 1
+
+runtime: python312
+app_engine_apis: true
+
+entrypoint: gunicorn -c gunicorn.conf.py --timeout 60 -b :$PORT main:app
