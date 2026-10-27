@@ -3,7 +3,8 @@
 **日期**：2026-02-26  
 **系统**：macOS ARM64 (Apple Silicon)  
 **XX-Net 版本**：5.16.6  
-**安装路径**：`/Applications/XX-Net/`
+**安装路径**：`/Applications/XX-Net/`  
+**背景时间线**：完整演进脉络（5.16.6 根因 → Rosetta → 5.16.7 release → pyBoringSSL 补齐 → 符号级实证）见同目录 `XX-Net-版本演进时间线.md`；本文档是操作细节唯一真相源，两者冲突时以本文档为准
 
 ---
 

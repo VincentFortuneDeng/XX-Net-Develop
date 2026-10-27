@@ -7,7 +7,7 @@ XX-Net macOS ARM64 维护与开发的唯一工件仓库。此前散落 `~/Downlo
 | 目录 | 职责 |
 |---|---|
 | `Coding/XX-Net-5.16.7.1/` | 开发代码快照：官方 5.16.7 基线 + 本地补丁集（版本线 5.16.7.1 起）。补丁清单见其 `LOCAL-VERSION.md` |
-| `docs/` | 三份权威文档：`XX-Net-macOS-ARM64-修复记录.md`（完整修复史，唯一真相源）、`XX-Net-macOS-修复-PR说明.md`、`XX-Net-根修接力-按启用状态过滤轮询.md` |
+| `docs/` | 四份权威文档：`XX-Net-macOS-ARM64-修复记录.md`（完整修复史，唯一真相源）、`XX-Net-版本演进时间线.md`（演进脉络与跨会话背景事实，新会话/子代理先读）、`XX-Net-macOS-修复-PR说明.md`、`XX-Net-根修接力-按启用状态过滤轮询.md` |
 | `tests/` | 离线测试 6 个脚本（原 `XX-Net-qc-tests-20261026/` 平铺） |
 | `backups/` | 改动前备份：`XX-Net-backup-20261026-113856.zip`、`XX-Net-backup-20261026-181933/`（code.tar.zip + data.tar.zip） |
 | `installer/` | ARM64 一键安装器交付包：`install_xxnet_arm64.sh`、`README-安装说明.txt`、`XX-Net-5.16.7.zip`（官方原包）、`boringssl.abi3.so`、`XX-Net-arm64-package.zip`（原始归档） |
@@ -37,7 +37,7 @@ python3 tests/probe_wrap_socket_fd.py   # 探针，非断言测试
 
 ## 工件索引（按用途）
 
-- 恢复上下文/接力维护：先读 `docs/XX-Net-macOS-ARM64-修复记录.md` 的目录与末三章，再按 `Coding/XX-Net-5.16.7.1/LOCAL-VERSION.md` 对照补丁
+- 恢复上下文/接力维护：先读 `docs/XX-Net-版本演进时间线.md` 建立时间线认知，再读 `docs/XX-Net-macOS-ARM64-修复记录.md` 的目录与末三章，然后按 `Coding/XX-Net-5.16.7.1/LOCAL-VERSION.md` 对照补丁
 - 回滚：`backups/XX-Net-backup-20261026-181933/`（四项修复上线前完整备份）
 - 重建 BoringSSL：`boringssl-arm64/BUILD-macOS-ARM64.md`（钉定 commit + 指纹核验值）
 - 重装/分发：`installer/install_xxnet_arm64.sh`
