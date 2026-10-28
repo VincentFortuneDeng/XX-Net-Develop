@@ -652,3 +652,14 @@ v1 两方案经用户两轮追问后修订：核心洞察 ① not enough ip 每�
 - rsync 前备份：`backups/pre-rsync-20261028/`（2 份 `.orig` + 2 份 `.diff`，diff 行数 connect_manager 51 / http1 81，与 G 阶段改动一致）。
 - rsync 覆盖：`connect_manager.py`、`http1.py` 两文件到 `/Applications/XX-Net/code/default/lib/noarch/front_base/`，rsync 后逐文件 diff 校验与快照完全一致。
 - 运行进程（10-28 10:44 启动 PID 14268）仍跑 F 阶段代码；**待用户重启后 G 阶段生效**，重启后可复核：not enough ip 放行行应带 `(suppressed N last window)`、旱灾结束时出现一条 `not enough ip recovered (suppressed X, total N)`、同坏前端 HEAD 密集死亡折为每 60 秒一组 WARN+trace。
+### 重启后审计（2026-10-28 21:48 重启，PID 94572）
+- **新进程确认**：launcher PID 94572，2026-10-28 21:48:30 启动（晚于 rsync 完成 19:46）→ G 阶段代码确认加载；`nc -z 127.0.0.1 8086` OPEN。
+- **代理回归**：`curl -x 127.0.0.1:8086 http://www.google.com/generate_204` → **204（0.55s）**。
+- **零 ERROR**：统计窗口 21:48:30→22:25（`awk '$1=="2026-10-28" && $2>="21:48:30"'`，约 37 分钟），7 份日志（launcher/gae_proxy/x_tunnel/seley/tls_relay/cloudflare/smart_router）ERROR 合计 **0**。
+- **提案 A 实证（not enough ip 新格式，三份日志全部生效）**：
+  - 放行行携带上一窗计数：`not enough ip (suppressed 0 last window, suppressing for 60s after this line)`；恢复通告 `not enough ip recovered (suppressed X, total N)` 与放行行近乎 1:1 成对。最终计数（截至 22:25）：tls_relay 56 放行 / 55 recovered、seley 35 / 35、cloudflare 5 / 4——tls/cloudflare 各 1 条差额为窗口尾部旱态仍在进行中（cloudflare 尾行 22:21:55 放行后未恢复），恢复行尚未到来，非丢账。
+  - **尾账闭环实证**：cloudflare `21:49:37 not enough ip recovered (suppressed 5, total 5)`——窗口内 5 次抑制被恢复行一次性结算清账，「开始/过程速率/尾窗/总数」四要素完整。
+  - tls_relay 样例呈旱灾-恢复短周期交替：21:48:43 放行(suppressed 0) → 21:49:34 recovered (suppressed 4, total 4) → 21:49:36 放行(suppressed 0) → 21:49:46 recovered (suppressed 0, total 0)。旱灾事件率低，典型窗口计数 0-5，与「追问澄清」推演（常态远低于 60 正字天花板）一致。
+- **提案 B 实证（HEAD 按前端聚合）**：seley 新窗口 HEAD WARN 仅 5 条，来自 3 个不同前端（56.155.82.86 / 58.20.254.31 / 209.33.166.19×3）；同前端 209.33.166.19 三条间隔 12min / 4.6min，均远超 60s 闸门——密集死亡折行达标，稀疏失败各自放行（闸门语义）。tls_relay / cloudflare 新窗口 0 条。trace 行无 `(suppressed N)` 尾缀属正常（同窗无第二次失败，N=0 不加尾缀）。
+- **背景流量（真实信号未节流，符合 T3 设计）**：seley 新窗口 `_connect_ssl ... fail:OSError TimeoutError`（病态前端 connect 失败）与 x_tunnel `POST ny3.xx-net.org / response_fail:retry timeout:30`（上游波动链路）仍逐条落盘。
+- **审计判定**：G 阶段（提案 A+B）全部生效——not enough ip 四要素齐全、恢复清账闭环、HEAD 折行达标、零 ERROR、代理回归 204。F/G 两阶段日志治理至此全部收尾。
