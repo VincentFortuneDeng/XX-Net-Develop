@@ -166,11 +166,11 @@ class ConnectManager(object):
         self._connection_waiting_num = 0
         self.no_ip_lock = threading.Lock()
         self.no_ip_time = 0
-        # (F-phase 2026-10-27) "not enough ip" warn throttle state, see
-        # _connect_process. suppressed_no_ip_warn accumulates occurrences
-        # hidden by the 60s window (currently a counter only, for diagnosis).
+        # (G 阶段 2026-10-28) not enough ip 告警账本：当前窗口计数、
+        # 本轮旱态累计抑制数；恢复时结算尾窗并一次性清零。
         self.last_no_ip_warn = 0
         self.suppressed_no_ip_warn = 0
+        self.total_suppressed_no_ip_warn = 0
 
         # after new created ssl_sock timeout(50 seconds)
         # call the callback.
@@ -302,17 +302,27 @@ class ConnectManager(object):
                 now = time.time()
                 with self.no_ip_lock:
                     self.no_ip_time = now
-                    # (F-phase 2026-10-27) warn at most once per 60s: every
-                    # idle _connect_process loop hit this line when the front
-                    # pool drained (2075/day on tls_relay). The signal is real
-                    # but its rate is not; suppressed occurrences are counted.
+                    # 每次放行结算上一窗口；累计计数保留到恢复通告。
                     if now - self.last_no_ip_warn >= 60:
-                        self.logger.warning("not enough ip (suppressing for 60s after this line)")
+                        self.logger.warning("not enough ip (suppressed %d last window, suppressing for 60s after this line)",
+                                            self.suppressed_no_ip_warn)
                         self.last_no_ip_warn = now
+                        self.suppressed_no_ip_warn = 0
                     else:
                         self.suppressed_no_ip_warn += 1
+                        self.total_suppressed_no_ip_warn += 1
                     time.sleep(1)
                 return None
+
+            # 与旱态计账共用同一把锁，确保恢复通告只结算、清零一次。
+            with self.no_ip_lock:
+                if self.last_no_ip_warn:
+                    self.logger.warning("not enough ip recovered (suppressed %d, total %d)",
+                                        self.suppressed_no_ip_warn,
+                                        self.total_suppressed_no_ip_warn)
+                    self.last_no_ip_warn = 0
+                    self.suppressed_no_ip_warn = 0
+                    self.total_suppressed_no_ip_warn = 0
 
             # self.logger.debug("create ssl conn %s", ip_str)
             ssl_sock = self._create_ssl_connection(host_info)

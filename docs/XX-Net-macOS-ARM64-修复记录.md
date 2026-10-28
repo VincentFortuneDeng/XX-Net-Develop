@@ -620,7 +620,7 @@ seley trace 完全达标（-99.6%）；not enough ip ≤1 条/分/实例达标�
 - 节流判定：今天不可达但无害（两个整数属性）；若未来 head_request 改为同 worker 重试多次（常见改动），保险自动生效。离线测试 B 组已验证实现正确。结论：保留并在文档标明「当前不可达」，不做删改（用户可选删除，代码极简主义同样成立）。
 ## 与旧机制（B6 前）的本质区别（用户原问「旧问题是否复现」的最终答案）
 旧缺陷（B6 前 warn_send_block）：挂账的 suppressed 结算需未来事件偿还，账期无上限，且 `id(s)` 复用会把旧账错挂到不相干新 socket（错账，非丟账）。B6 补 close 结算后闭环。F 阶段机制：时间窗过期账目自动作废，无错账可能；最坏损失收窄为「最后窗口的量级注解」，且每窗口首行信号任何情况下已实时落盘。无内容级丢失，无内存累计。
-## 待实施提案 v2（2026-10-28 午用户追问后修订，未实施，等确认后执行）
+## 待实施提案 v2（A+B 已于 2026-10-28 午后实施，原文留档）
 v1 两方案经用户两轮追问后修订：核心洞察 ① not enough ip 每分钟放行行不带计数（比 LogThrottle 少一层），旱灾期间「在旱」可见但「旱多重」不可见；② HEAD 节流按 worker 记账是结构性不可达的摆设，而实证（T4 的 186→14 条均为同一坏前端被一茬茬新 worker 重复探测）表明按前端聚合才是节流的真正目标。
 - **提案 A（处 2 not enough ip：补严重度 + 恢复通告）**：每分钟放行行改为携带上一窗口计数（`(suppressed N last window)`，滞后 ≤60s，同 LogThrottle 语义）；恢复分支（`get_ip_sni_host()` 成功且处于旱态）补打 `not enough ip recovered (suppressed X, total N)` 并清账。旱灾在日志中成为完整故事：开始/过程速率/尾窗/总数四要素，行数成本不变（旱灾期间仍 ≤1 条/分 + 结束 1 条）。该分支被 no_ip_lock 串行化且每圈 sleep(1)，窗口内正字理论上限约 60——这只是防洪天花板推演，非常态：实测事件率（T4 旧代码无节流基线）tls_relay 1.56 条/分、seley 0.39 条/分，典型窗口计数 0-2，详见下方「追问澄清」。约 +8 行。
 - **提案 B（处 3 HEAD：按前端聚合，用户提出）**：删 per-worker 属性，改类级 `LogThrottle(60)` 实例、key= `ssl_sock.ip_str`；放行时打 warn+trace（trace 取窗口内首个失败 worker）。保证：行数数学上不增（每条放行 ≥1 次死亡，新行数=有死亡的窗口数 ≤ 死亡数）；突发场景 50 死/分 → 1 行 + suppressed 49；计数器变为活的「按前端 worker 死亡率」诊断。改约 10 行 + 测试用例更新。
@@ -635,3 +635,15 @@ v1 两方案经用户两轮追问后修订：核心洞察 ① not enough ip 每�
 - **计时行/恢复行分工（备查）**：60 秒计时行只存在于旱灾期间（首条到恢复前）；恢复前最后一个不足 60 秒的尾窗由恢复行结算（total 含尾窗）。一次 `_connect_process` 调用内两分支互斥：恢复 = `get_ip_sni_host()` 返回非 None → 走正常连接路径，根本不进入计时段（`connect_manager.py:296-318`）。
 - **HEAD 与 url 节流的关系**：同一病根（坏前端/上游波动）在两层楼各报的症状，互补不可互代。retry_task_cb 按 task.url 记账（含调度器 /ping 心跳任务），回答「哪些任务地址在失败」（T4 剩余 3 条全是 /ping）；HEAD 探测没有业务 url——探测动作本身就是向前端发 GET / 探活，记账钥匙用前端 ip_str（提案 B），回答「哪条前端线路在杀 worker」。同一坏前端会同时触发两族日志；改后两族行均带 ip_str，可互相印证。
 - **稀疏事件不被节流压缩（闸门语义）**：节流保证「每 key 每 60 秒至多 1 条」，不是「每小时 1 条」。每小时零星死 10 个 worker = 每次死亡到来时上一窗口已过期 → 各自开新窗放行，仍 10 条。节流压缩的是「同窗口内的重复挤兑」（50 死挤进同一分钟 → 1 行 + suppressed 49），不压缩稀疏独立事件（各值得及时上报，10 条/小时不构成洪水）。比喻：闸门每分钟放 1 人——人群挤来放 1 拦 49，零星来客每次直接过。若确需「每前端每小时 1 条」可把窗口加长到 3600s，不建议：对病态高频前端 60s 窗已封顶，加长只牺牲稀疏事件及时性、收益趋零。
+## G 实施：提案 A+B 落盘（2026-10-28 午后，无部署）
+范围严格按用户拍板执行：仅 A+B；C 未做，`LogThrottle` 公共语义未变；http2 未动；未 rsync、未重启任何进程。
+### 改动摘要
+- **提案 A（`connect_manager.py:169-173, 296-325`）**：60 秒放行行改为 `not enough ip (suppressed N last window, suppressing for 60s after this line)`，输出上一窗口计数并清零；新增本轮旱态累计计数。`get_ip_sni_host()` 成功且账本处于旱态时，在同一 `no_ip_lock` 内原子结算并打一次 `not enough ip recovered (suppressed X, total N)`，其中 X 为恢复前尾窗抑制数、N 为本轮旱态累计抑制总数（含尾窗），随后全部清账。`no_ip_time` 赋值、`_need_more_ip` 轮询、`sleep(1)` 位置与连接数据路径均未改。
+- **提案 B（`http1.py:5, 21-23, 259-305`）**：删除 per-worker `last_head_fail_warn`/`suppressed_head_fail_warn`，改为 `Http1Worker.head_fail_throttle = LogThrottle(60)`，以 `ssl_sock.ip_str` 为 key 跨 worker 聚合。send len / status / exception 三条失败出口全部统一：放行时保留原 WARN 并输出 trace，trace 在有上一窗计数时附 `(suppressed N)`；未放行仅静默日志。探测、`recheck_ip`、`close`、返回值及 `request_onway` 语义未改。
+- **测试（`test_xlog_roll_f.py`）**：既有滚动与 `LogThrottle` 用例原样保留；新增 C 组 6 项（HEAD 三出口、同 ip 抑制与过期结算、不同 ip 隔离、20 线程并发及计数结算）与 D 组 4 项（放行行上一窗计数、恢复尾窗+总数、恢复仅一次、账本清零）。测试按文件路径加载真实模块，仅 stub 外部依赖，不触运行进程。
+### 测试结果
+- `python3 -m py_compile`：`connect_manager.py`、`http1.py` 均通过。
+- `python3 Coding/XX-Net-5.16.7.1/test_xlog_roll_f.py`：**23/23 PASS**（滚动 7 + LogThrottle 6 + HEAD 聚合 6 + not enough ip 恢复 4），新增用例在旧实现上 9 项 RED、实施后全部 GREEN。
+- 既有回归：`tests/test_dns_dot.py`、`test_try_add_remove_races.py`、`test_ipv6_filter.py`、`test_blockio_ratelimit.py`、`test_dns_nameserver_filter.py` 均 **ALL PASSED**；`tests/probe_wrap_socket_fd.py` 结论保持 **A(detached)**。
+### 预期效果与边界
+`not enough ip` 现在具备开始、上一窗速率、恢复尾窗、本轮累计四要素，恢复行补齐最后不足 60 秒的账目且只出现一次。HEAD 从「每 worker 一条、按 worker 重置」变为「每前端每 60 秒至多一条」，同一病态前端的 worker 密集死亡会折成放行行 + 下一窗 `(suppressed N)`，N 可直接作为该前端窗口内 worker 死亡率的诊断量级；稀疏独立失败仍逐条放行。本轮仅快照落盘，生产行为需后续另行 rsync 并由用户重启后生效。

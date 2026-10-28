@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""F-phase T3 offline test: xlog warning_log roll + LogThrottle.
+"""F/G-phase offline tests: xlog rolling and log throttling.
 
-Loads the modified xlog.py by file path with stubbed deps (utils/six),
+Loads the modified modules by file path with stubbed external deps,
 runs everything in a temp dir, never touches the running launcher.
 
 Checks:
@@ -12,6 +12,10 @@ Checks:
  A4) .1 kept intact at open time when main file oversized (init-time roll)
  B)  LogThrottle: first hit allowed, window hits suppressed, suppressed
      count reported on next allowed hit, prune keeps dict bounded
+ C)  HEAD probe failures aggregate by front ip_str across all exits and
+     concurrent workers, with the previous window count on the next log
+ D)  not-enough-ip lines settle the previous window and recovery emits
+     the tail plus drought total exactly once before clearing the ledger
 """
 import os
 import sys
@@ -134,6 +138,200 @@ threads = [threading.Thread(target=hammer, args=(200,)) for _ in range(8)]
 [t.join() for t in threads]
 check("B6 dict bounded under concurrency", len(lt3.hits) <= 512,
       "len=%d" % len(lt3.hits))
+
+# --- C: G-phase HEAD probe throttling, aggregated by front ip_str ---
+# Load the real worker/connect-manager modules with only their external
+# dependencies stubbed. No running process is imported or touched.
+import importlib.util
+
+FRONT_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "code", "default", "lib", "noarch", "front_base")
+PKG = "front_base_under_test"
+pkg_stub = types.ModuleType(PKG)
+pkg_stub.__path__ = [FRONT_BASE]
+sys.modules[PKG] = pkg_stub
+
+http_common_stub = types.ModuleType(PKG + ".http_common")
+http_common_stub.time = _time
+http_common_stub.HttpWorker = type("HttpWorker", (), {})
+sys.modules[PKG + ".http_common"] = http_common_stub
+
+openssl_wrap_stub = types.ModuleType(PKG + ".openssl_wrap")
+openssl_wrap_stub.SSLConnection = type("SSLConnection", (), {})
+sys.modules[PKG + ".openssl_wrap"] = openssl_wrap_stub
+
+xlog_stub = types.ModuleType("xlog")
+xlog_stub.LogThrottle = LogThrottle
+sys.modules["xlog"] = xlog_stub
+
+class ResponseStub(object):
+    status = 500
+
+    def __init__(self, sock):
+        self.sock = sock
+
+    def begin(self, timeout):
+        pass
+
+simple_http_client_stub = types.ModuleType("simple_http_client")
+simple_http_client_stub.Response = ResponseStub
+sys.modules["simple_http_client"] = simple_http_client_stub
+
+def load_front_module(name):
+    path = os.path.join(FRONT_BASE, name + ".py")
+    spec = importlib.util.spec_from_file_location(PKG + "." + name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+http1_mod = load_front_module("http1")
+connect_manager_mod = load_front_module("connect_manager")
+Http1Worker = http1_mod.Http1Worker
+
+class CaptureLogger(object):
+    def __init__(self):
+        self.warnings = []
+
+    def warn(self, fmt, *args):
+        self.warnings.append(fmt % args if args else fmt)
+
+    warning = warn
+
+    def debug(self, fmt, *args):
+        pass
+
+    def exception(self, fmt, *args):
+        self.warn(fmt, *args)
+
+class HeadSocket(object):
+    def __init__(self, ip_str, mode):
+        self.ip_str = ip_str
+        self.host = b"example.com"
+        self.sni = "example.com"
+        self.mode = mode
+
+    def send(self, data):
+        if self.mode == "exception":
+            raise RuntimeError("head boom")
+        if self.mode == "short-send":
+            return len(data) - 1
+        return len(data)
+
+def make_head_worker(ip_str, mode, logger):
+    worker = Http1Worker.__new__(Http1Worker)
+    worker.logger = logger
+    worker.ssl_sock = HeadSocket(ip_str, mode)
+    worker.ip_str = ip_str
+    worker.config = types.SimpleNamespace(http1_trace_size=20)
+    worker.trace_time = []
+    worker.processed_tasks = 0
+    worker.transfered_size = 0
+    worker.last_recv_time = 0
+    worker.request_onway = False
+    return worker
+
+head_log = CaptureLogger()
+Http1Worker.head_fail_throttle = LogThrottle(60)
+w1 = make_head_worker("192.0.2.1", "exception", head_log)
+check("C1 exception exit first hit allowed", w1.head_request() is False
+      and len(head_log.warnings) == 2
+      and "HEAD keep alive request fail" in head_log.warnings[-2],
+      "warnings=%r" % head_log.warnings)
+w2 = make_head_worker("192.0.2.1", "short-send", head_log)
+check("C2 same ip short send suppressed", w2.head_request() is False
+      and len(head_log.warnings) == 2,
+      "warnings=%r" % head_log.warnings)
+Http1Worker.head_fail_throttle.interval = 0.01
+_time.sleep(0.02)
+w3 = make_head_worker("192.0.2.1", "status", head_log)
+check("C3 expired same ip status logs count and trace",
+      w3.head_request() is False and len(head_log.warnings) == 4
+      and "head fail status:500" in head_log.warnings[-2]
+      and head_log.warnings[-1].endswith("(suppressed 1)"),
+      "warnings=%r" % head_log.warnings)
+Http1Worker.head_fail_throttle.interval = 60
+w4 = make_head_worker("192.0.2.2", "exception", head_log)
+check("C4 different ip independent", w4.head_request() is False
+      and len(head_log.warnings) == 6,
+      "warnings=%r" % head_log.warnings)
+
+concurrent_log = CaptureLogger()
+Http1Worker.head_fail_throttle = LogThrottle(60)
+concurrent_results = []
+def head_hammer():
+    worker = make_head_worker("192.0.2.3", "exception", concurrent_log)
+    concurrent_results.append(worker.head_request())
+threads = [threading.Thread(target=head_hammer) for _ in range(20)]
+[t.start() for t in threads]
+[t.join() for t in threads]
+check("C5 concurrent same ip emits one warn/trace",
+      concurrent_results == [False] * 20 and len(concurrent_log.warnings) == 2,
+      "warnings=%d" % len(concurrent_log.warnings))
+Http1Worker.head_fail_throttle.interval = 0.01
+_time.sleep(0.02)
+w5 = make_head_worker("192.0.2.3", "exception", concurrent_log)
+w5.head_request()
+check("C6 concurrent suppressed count settled",
+      concurrent_log.warnings[-1].endswith("(suppressed 19)"),
+      "trace=%r" % concurrent_log.warnings[-1])
+
+# --- D: G-phase not-enough-ip window counts and recovery settlement ---
+class FakeTime(object):
+    def __init__(self):
+        self.now = 100.0
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+fake_time = FakeTime()
+connect_manager_mod.time = fake_time
+cm_log = CaptureLogger()
+cm = connect_manager_mod.ConnectManager.__new__(connect_manager_mod.ConnectManager)
+cm.logger = cm_log
+cm.config = types.SimpleNamespace(show_state_debug=False, connect_create_interval=0)
+cm.ip_manager = types.SimpleNamespace(get_ip_sni_host=lambda: None)
+cm.no_ip_lock = threading.Lock()
+cm.no_ip_time = 0
+cm.last_no_ip_warn = 0
+cm.suppressed_no_ip_warn = 0
+cm.total_suppressed_no_ip_warn = 0
+cm.new_conn_pool = connect_manager_mod.ConnectPool()
+recovered_sock = HeadSocket("192.0.2.4", "status")
+recovered_sock.handshake_time = 1
+cm._create_ssl_connection = lambda host_info: recovered_sock
+
+cm._connect_process()
+check("D1 first drought line carries zero previous-window count",
+      cm_log.warnings == [
+          "not enough ip (suppressed 0 last window, suppressing for 60s after this line)"],
+      "warnings=%r" % cm_log.warnings)
+fake_time.now = 101.0
+cm._connect_process()
+fake_time.now = 160.0
+cm._connect_process()
+check("D2 next allowed line settles previous window",
+      cm_log.warnings[-1] ==
+      "not enough ip (suppressed 1 last window, suppressing for 60s after this line)",
+      "warnings=%r" % cm_log.warnings)
+fake_time.now = 161.0
+cm._connect_process()
+cm.ip_manager.get_ip_sni_host = lambda: {"ip_str": "192.0.2.4", "sni": "s", "host": "h"}
+fake_time.now = 162.0
+check("D3 recovery returns connection and logs tail plus total",
+      cm._connect_process() is recovered_sock
+      and cm_log.warnings[-1] == "not enough ip recovered (suppressed 1, total 2)",
+      "warnings=%r" % cm_log.warnings)
+cm._connect_process()
+check("D4 recovery is once and ledger cleared",
+      len(cm_log.warnings) == 3 and cm.last_no_ip_warn == 0
+      and cm.suppressed_no_ip_warn == 0 and cm.total_suppressed_no_ip_warn == 0,
+      "warnings=%r last=%r suppressed=%r total=%r" %
+      (cm_log.warnings, cm.last_no_ip_warn, cm.suppressed_no_ip_warn,
+       cm.total_suppressed_no_ip_warn))
 
 print()
 if failures:
