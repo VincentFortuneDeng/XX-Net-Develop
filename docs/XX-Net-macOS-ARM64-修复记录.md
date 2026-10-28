@@ -620,8 +620,10 @@ seley trace 完全达标（-99.6%）；not enough ip ≤1 条/分/实例达标�
 - 节流判定：今天不可达但无害（两个整数属性）；若未来 head_request 改为同 worker 重试多次（常见改动），保险自动生效。离线测试 B 组已验证实现正确。结论：保留并在文档标明「当前不可达」，不做删改（用户可选删除，代码极简主义同样成立）。
 ## 与旧机制（B6 前）的本质区别（用户原问「旧问题是否复现」的最终答案）
 旧缺陷（B6 前 warn_send_block）：挂账的 suppressed 结算需未来事件偿还，账期无上限，且 `id(s)` 复用会把旧账错挂到不相干新 socket（错账，非丟账）。B6 补 close 结算后闭环。F 阶段机制：时间窗过期账目自动作废，无错账可能；最坏损失收窄为「最后窗口的量级注解」，且每窗口首行信号任何情况下已实时落盘。无内容级丢失，无内存累计。
-## 待实施提案（用户已认可方向，未实施，等确认后执行）
-- **方案 1（脉冲结算，处 4 LogThrottle）**：窗口内每攒满 N 条（建议 100）放行一条带 `(suppressed N, throttled)` 的行并重新计数；尾账上限从整个窗口计数降至 <N；洪水落盘行数被 N 钳住。改 `xlog.py` 约 5 行 + `test_xlog_roll_f.py` 用例更新。
-- **方案 5（恢复即结算，处 2 not enough ip）**：`_connect_process` 在 `get_ip_sni_host()` 成功分支检测 `suppressed_no_ip_warn > 0` 则补打「not enough ip recovered, suppressed N total」并清零。约 +3 行。
-- 处 1（B6）完备不动；处 3（HEAD）维持不动；处 5 无账本不涉及。
-- 实施清单：改代码 → py_compile → `test_xlog_roll_f.py` + 既有 6 套回归 → 更新本文档与 `LOCAL-VERSION.md` 补丁表 → commit（快照与 /Applications 同步需 rsync + 用户重启，另行安排）。
+## 待实施提案 v2（2026-10-28 午用户追问后修订，未实施，等确认后执行）
+v1 两方案经用户两轮追问后修订：核心洞察 ① not enough ip 每分钟放行行不带计数（比 LogThrottle 少一层），旱灾期间「在旱」可见但「旱多重」不可见；② HEAD 节流按 worker 记账是结构性不可达的摆设，而实证（T4 的 186→14 条均为同一坏前端被一茬茬新 worker 重复探测）表明按前端聚合才是节流的真正目标。
+- **提案 A（处 2 not enough ip：补严重度 + 恢复通告）**：每分钟放行行改为携带上一窗口计数（`(suppressed N last window)`，滞后 ≤60s，同 LogThrottle 语义）；恢复分支（`get_ip_sni_host()` 成功且处于旱态）补打 `not enough ip recovered (suppressed X, total N)` 并清账。旱灾在日志中成为完整故事：开始/过程速率/尾窗/总数四要素，行数成本不变（旱灾期间仍 ≤1 条/分 + 结束 1 条）。该分支被 no_ip_lock 串行化且每圈 sleep(1)，窗口内正字上限约 60，无需脉冲机制。约 +8 行。
+- **提案 B（处 3 HEAD：按前端聚合，用户提出）**：删 per-worker 属性，改类级 `LogThrottle(60)` 实例、key= `ssl_sock.ip_str`；放行时打 warn+trace（trace 取窗口内首个失败 worker）。保证：行数数学上不增（每条放行 ≥1 次死亡，新行数=有死亡的窗口数 ≤ 死亡数）；突发场景 50 死/分 → 1 行 + suppressed 49；计数器变为活的「按前端 worker 死亡率」诊断。改约 10 行 + 测试用例更新。
+- **提案 C（处 4 LogThrottle 脉冲结算）：降级为可选**。理由：每次放行行已带上一窗口计数（滞后一窗），滞后对诊断可接受；尾账损失已收窄为「沉默 key 的最后一窗计数」，实测 per-key 速率低，脉冲的边际价值小。若用户要求窗口内实时量级再实施（N=100，`xlog.py` 约 5 行）。
+- 处 1（B6）完备不动；处 5 无账本不涉及。
+- 实施清单（A+B 为默认范围）：改 connect_manager.py / http1.py → py_compile → `test_xlog_roll_f.py` 更新（LogThrottle 语义未变，新增/调整 HEAD 聚合用例）+ 既有 6 套回归 → 更新本文档与 `LOCAL-VERSION.md` 补丁表 → commit（快照与 /Applications 同步需 rsync + 用户重启，另行安排）。
