@@ -646,4 +646,9 @@ v1 两方案经用户两轮追问后修订：核心洞察 ① not enough ip 每�
 - `python3 Coding/XX-Net-5.16.7.1/test_xlog_roll_f.py`：**23/23 PASS**（滚动 7 + LogThrottle 6 + HEAD 聚合 6 + not enough ip 恢复 4），新增用例在旧实现上 9 项 RED、实施后全部 GREEN。
 - 既有回归：`tests/test_dns_dot.py`、`test_try_add_remove_races.py`、`test_ipv6_filter.py`、`test_blockio_ratelimit.py`、`test_dns_nameserver_filter.py` 均 **ALL PASSED**；`tests/probe_wrap_socket_fd.py` 结论保持 **A(detached)**。
 ### 预期效果与边界
-`not enough ip` 现在具备开始、上一窗速率、恢复尾窗、本轮累计四要素，恢复行补齐最后不足 60 秒的账目且只出现一次。HEAD 从「每 worker 一条、按 worker 重置」变为「每前端每 60 秒至多一条」，同一病态前端的 worker 密集死亡会折成放行行 + 下一窗 `(suppressed N)`，N 可直接作为该前端窗口内 worker 死亡率的诊断量级；稀疏独立失败仍逐条放行。本轮仅快照落盘，生产行为需后续另行 rsync 并由用户重启后生效。
+`not enough ip` 现在具备开始、上一窗速率、恢复尾窗、本轮累计四要素，恢复行补齐最后不足 60 秒的账目且只出现一次。HEAD 从「每 worker 一条、按 worker 重置」变为「每前端每 60 秒至多一条」，同一病态前端的 worker 密集死亡会折成放行行 + 下一窗 `(suppressed N)`，N 可直接作为该前端窗口内 worker 死亡率的诊断量级；稀疏独立失败仍逐条放行。
+### 部署（2026-10-28 19:46，待用户重启）
+- 交叉验收（Oz 复核）：diff 审查（提案 A 账本三字段/锁内原子恢复通告、提案 B 三出口全覆盖/旧属性删净/返回值与探测逻辑零改动）+ 独立复跑 py_compile ×2、test_xlog_roll_f 23/23、五套回归全 PASS、probe 结论 A(detached)——全部通过，结论验收通过。
+- rsync 前备份：`backups/pre-rsync-20261028/`（2 份 `.orig` + 2 份 `.diff`，diff 行数 connect_manager 51 / http1 81，与 G 阶段改动一致）。
+- rsync 覆盖：`connect_manager.py`、`http1.py` 两文件到 `/Applications/XX-Net/code/default/lib/noarch/front_base/`，rsync 后逐文件 diff 校验与快照完全一致。
+- 运行进程（10-28 10:44 启动 PID 14268）仍跑 F 阶段代码；**待用户重启后 G 阶段生效**，重启后可复核：not enough ip 放行行应带 `(suppressed N last window)`、旱灾结束时出现一条 `not enough ip recovered (suppressed X, total N)`、同坏前端 HEAD 密集死亡折为每 60 秒一组 WARN+trace。
