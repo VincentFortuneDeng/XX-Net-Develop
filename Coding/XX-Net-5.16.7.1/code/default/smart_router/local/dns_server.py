@@ -159,7 +159,10 @@ class DnsServer(object):
             reserved = struct.unpack(">H", req_data[0:2])[0]
             frag = ord(req_data[2:3])
             if reserved != 0 or frag != 0:
-                xlog.warn("reserved:%d frag:%d", reserved, frag)
+                # (F-phase 2026-10-27) reserved/frag is a packet field inspection,
+                # not an operational failure: 14897+ WARN/day on this host.
+                # DEBUG keeps it queryable in start_log while silencing warning log.
+                xlog.debug("reserved:%d frag:%d", reserved, frag)
                 return
 
             addr_type = ord(req_data[3:4])

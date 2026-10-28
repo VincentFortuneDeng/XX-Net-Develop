@@ -166,6 +166,11 @@ class ConnectManager(object):
         self._connection_waiting_num = 0
         self.no_ip_lock = threading.Lock()
         self.no_ip_time = 0
+        # (F-phase 2026-10-27) "not enough ip" warn throttle state, see
+        # _connect_process. suppressed_no_ip_warn accumulates occurrences
+        # hidden by the 60s window (currently a counter only, for diagnosis).
+        self.last_no_ip_warn = 0
+        self.suppressed_no_ip_warn = 0
 
         # after new created ssl_sock timeout(50 seconds)
         # call the callback.
@@ -294,9 +299,18 @@ class ConnectManager(object):
         try:
             host_info = self.ip_manager.get_ip_sni_host()
             if not host_info:
-                self.no_ip_time = time.time()
+                now = time.time()
                 with self.no_ip_lock:
-                    self.logger.warning("not enough ip")
+                    self.no_ip_time = now
+                    # (F-phase 2026-10-27) warn at most once per 60s: every
+                    # idle _connect_process loop hit this line when the front
+                    # pool drained (2075/day on tls_relay). The signal is real
+                    # but its rate is not; suppressed occurrences are counted.
+                    if now - self.last_no_ip_warn >= 60:
+                        self.logger.warning("not enough ip (suppressing for 60s after this line)")
+                        self.last_no_ip_warn = now
+                    else:
+                        self.suppressed_no_ip_warn += 1
                     time.sleep(1)
                 return None
 

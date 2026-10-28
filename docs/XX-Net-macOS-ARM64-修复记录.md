@@ -540,3 +540,56 @@ QC 计划 A1-A7/B1-B6/C/E/D 全部完成；四项修复 + 质检加固在生产�
 - 代理回归 `curl -x 127.0.0.1:8086 http://www.google.com/generate_204` → **204（0.4s）**，DNS 解析正常。
 ## 上线判定
 五项修复（四项 + 本轮 nameserver 过滤）+ B1-B6 全部在线，零回归。累计改动文件仍 3 个：`smart_router/local/dns_query.py`、`smart_router/local/pipe_socks.py`、`x_tunnel/local/tls_relay_front/ip_manager.py`（seley 经相对导入继承）。离线测试共 5 套存于 `~/Downloads/XX-Net-qc-tests-20261026/`。
+# F 阶段：日志治理（2026-10-27 晚—10-28 午）
+## T1 历史日志归档与止损
+- 全量归档 7 份 warning 日志（共约 237MB）到 `backups/logs-20261027/`，打 zip 入库 commit `7738967`（.gitignore 仅排除 `*.log`，zip/gz 可入库）。
+- seley_front_warning.log 225,444,543B / 3,564,091 行，gzip -9 后 2,353,574B（约 1% 压缩率）；归档前 cmp 字节级校验一致。
+- 对运行进程（launcher PID 27738，12:47 启动，lsof 确认持全部 7 个 warning fd，O_APPEND）持有的 5 个热日志 cp 后 `: >` truncate：seley/tls_relay/smart_router/x_tunnel/cloudflare_front 归零；truncate 后 3 秒复核 fd 继续写入（smart_router 870B、tls_relay 856B），O_APPEND 止损安全成立。launcher/gae_proxy 小日志仅归档不 truncate。
+- 路径勘误：warning 日志实际在各模块子目录 `data/<module>/` 下；`connect_manager.py` 实际位于 `lib/noarch/front_base/`（计划写的 tls_relay_front 下不存在），行号 :299 与计划一致。
+## T2 补充分析：真问题清单（三分类）
+### 程序 bug（残留，低优先级）
+1. seley `trace:` 行主源 `front_base/http_dispatcher.py:400` `retry_task_cb` 任务轨迹 WARN（POST ny3.xx-net.org/ 主链路任务悬挂约 30 秒后重试，trace 显示 get_worker 耗时）；次源 `http1.py:287-288` keep-alive 探测失败 WARN+trace 对。重试/探测机制本身逻辑正常，属告警洪水而非逻辑 bug——本次以节流处置（T3）。
+2. `xlog.py:385` 顶层 `warning()` 笔误调用 `warnin`（官方 5.16.7 既有），当前无调用方触达，未修（超本轮范围，建议上游同步修复）。
+3. tls_relay `_connect_ssl` 对 `*.distravia.com` SNI 前端的 Timeout/OSError(65) 告警：前端池正常淘汰机制，日志量与远端健康度成正比，未改（not enough ip 节流已覆盖主要洪水）。
+### 环境现象（非 bug）
+4. smart_router `send_request except:OSError(65/51)` 合计 4,771 条（65×900、51×3,871）：10-26 20:00-23:00 占 73%（3,507 条，当晚网络切换窗口），10-27 起降为 70-273 条/小时稳态背景噪声。均为 UDP 本地 DNS 转发 sendto 不可达 nameserver 失败，DNS 兜底链路正常工作。定性：环境网络波动，非 bug；与 E 阶段 fe80 过滤修复兼容。
+### 上游服务波动（不在修复范围）
+5. tls_relay `not enough ip` 4,404 条/约 33 小时：时段聚集明显——10-26 13:00-15:00（821）与 19:00-10-27 01:00（1,624）两个高发窗；10-27 08:00-11:00 近乎消失（5-9 条/小时）；16:00-18:00 再聚集（905）。定性：上游 front 池健康度波动（服务器下发 IP 池质量+远端可达性），本地代码无法根治；每线程每循环打一条的洪水部分由 T3 节流处置（信号保留、速率限制）。
+6. x_tunnel `get_front fail` 21,035 条（`front_dispatcher.py:167`）：与 not enough ip 同源（front 池耗尽的上层表现），属上游波动链路，语义保留未节流（量级小于 seley）。
+7. cloudflare_front：`not enough ip` 766 条 + `get ip for www.{hostraise,haldersonmarine}.com fail:gaierror(8)` 1,226 条（本机 DNS 解析失败）+ ConnectionReset close（正常网络现象）。gaierror 为 DNS 环境问题，非 bug。
+### 结论
+本轮无需修复级变更的真 bug 为零；三类洪水型告警（reserved/frag、not enough ip、retry/HEAD trace）按定性分别降噪/节流；OSError(65/51) 与上游波动项仅记录监测。
+## T3 日志机制改造（5 文件，均在 Coding/XX-Net-5.16.7.1 快照内）
+1. **`lib/noarch/xlog.py`**：
+   - warning_log 10MB 单份滚动：新增 `_roll_warning_log_if_needed()`（沿 roll_log 模式，仅保留一代 `.1`，磁盘占用上限约 2×10MB）；挂点四处：`__init__` 开文件后、`reset_log_files()` 重开后、`log()` 写入路径（buffer_lock 内、写前检查）；roll 失败静默保持写路径存活（与主 log 异常风格一致）。
+   - 新增 `LogThrottle` 工具类：`allow(key) -> (allowed, suppressed_count)`，带锁、512 键过期剪枝（同 pipe_socks warn_send_block 策略），供多线程调用方复用。
+2. **`smart_router/local/dns_server.py:161-166`**：reserved/frag `xlog.warn` → `xlog.debug`（附依据注释：14,897 条/天的包字段检查非运行故障；DEBUG 仍进 start_log 可查）。
+3. **`lib/noarch/front_base/connect_manager.py`**：`not enough ip` 加 60s 节流（沿用既有 no_ip_lock，串行语义不变；新增 `last_no_ip_warn`/`suppressed_no_ip_warn` 属性；`no_ip_time` 赋值语义保持，`_need_more_ip` 轮询行为不变）；输出行附 `(suppressing for 60s after this line)` 标记；窗口内抑制次数入计数器。
+4. **`lib/noarch/front_base/http_dispatcher.py`**：`retry_task_cb` WARN 按 task.url 60s 节流（`LogThrottle(60)` 实例 `retry_log_throttle`；首条立即打、窗口内计数、下一条允许时附 `(suppressed N)`）；重试状态机零改动。
+5. **`lib/noarch/front_base/http1.py`**：`head_request` 探测失败 WARN+trace 对按 worker 60s 节流（`last_head_fail_warn`/`suppressed_head_fail_warn` 属性；warn/close 仅在该 worker 自己的 work_loop 线程调用，无需加锁）；trace 行扩展 `(suppressed N)` 后缀；探测/recheck/close 逻辑零改动。send/recv 主链路 trace 对未动（诊断价值高、量级低）。
+## T3 离线验证（全部通过，未触运行进程）
+- `python3 -m py_compile` ×5 改动文件通过。
+- 新增第 7 套离线测试 `Coding/XX-Net-5.16.7.1/test_xlog_roll_f.py`（stub 按文件加载，同既有风格）：roll 行为 4 项（未超限不滚、超限滚出 `.1` 且主文件重开变小、滚动后写入继续、二次滚动 `.1` 单代替换无 `.2`）+ LogThrottle 语义 6 项（首条放行/窗口抑制/计数累计/键隔离/窗口过期/并发 512 剪枝）= 10/10 PASS。
+- 仓库既有 6 套测试回归：test_dns_dot / test_try_add_remove_races / test_ipv6_filter / test_blockio_ratelimit / test_dns_nameserver_filter 全部 ALL PASSED；probe_wrap_socket_fd 结论不变（A detached）。
+## 上线状态
+- rsync 到 /Applications/XX-Net：覆盖前 diff 备份于 `backups/pre-rsync-20261027/`（5 份 `.orig` + 5 份 `.diff`，diff 行数 121/14/35/42/37 与改动一致），rsync 后逐文件 diff 校验与快照完全一致。
+- launcher 未由本任务重启；用户于 2026-10-28 10:44:04 亲自重启（新 PID 14268，启动时刻晚于 rsync 完成 10-27 21:16 → 新代码确认加载；`nc -z 127.0.0.1 8086` 端口正常，代理回归见下）。
+## T4 重启后审计窗口（2026-10-28 10:44-11:19，约 35 分钟）
+基线勘误：T1 truncate 后旧进程（PID 27738）持续写至重启（约 22 小时）曾污染初始基线；最终统计全部按时间戳切分（`awk '$1=="2026-10-28" && $2>="10:44:00"'`），下述新窗口数字不含旧进程输出。旧窗口对照 = 旧代码 10-27 12:47→10-28 10:44（约 22 小时）。
+### 实测 vs 预期
+- **代理功能**：`curl -x 127.0.0.1:8086 http://www.google.com/generate_204` → **204（0.37s）**。
+- **seley_front**（总行 4,972 → 112）：`retry_task_cb` trace 846 → 3（-99.6%；3 条均为 /ping 任务、间隔 ≥97 秒，60s 节流正确生效）；`not enough ip` 513（0.39 条/分）→ 6（0.17 条/分），全部带 `(suppressing for 60s after this line)` 标记；HEAD 探测失败 186（0.14 条/分）→ 14（0.40 条/分，10:55/11:12/11:19 三簇）——未降反升，定性见下节。
+- **tls_relay**（总行 5,536 → 146）：`not enough ip` 2,066（1.56 条/分）→ 7（0.20 条/分）全部带抑制标记，≤1 条/分达标；其余为 `_connect_ssl` 超时（distravia 病态前端）与连接 close 生命周期行（真实信号，T2 定性 3，未节流）。
+- **smart_router**（总行 32,652 → 9）：`reserved/frag` 32,596 → **0**（降 debug 生效）；余 9 行为 1.1.1.1 DoT/DoH 查询失败兜底链路（良性网络环境）；尾行 11:11:54 后静默。
+- **x_tunnel**：`get_front fail`（T2 归档窗口 21,035 条/33h）→ 新窗口 **0**；58 行均为 `roundtrip status:602` 超时告警（真实信号，本轮范围外）。
+- **cloudflare_front**：`not enough ip` 57 → 1（带标记）；总 11 行（task timeout 真实信号）。
+- **launcher**：ERROR 12 → **0**；2 行 check_update 网络环境告警（既有已知）。
+- **零 ERROR 回归**：新窗口 7 份日志 ERROR 合计 **0**。
+### HEAD 未降的定性（如实记录，非回归）
+- 代码核实：`head_request()` 失败后 worker 立即 `close("keep alive")`（`http1.py:112-115`），每个 worker 生命周期至多产生 1 条失败告警——60s 节流的抑制分支在生产中结构性不可达（全窗口 0 个 `(suppressed N)` 标记属必然结果，与旧代码单 worker 行为等价，无回归；离线测试 B 组已验证实现本身正确）。
+- 数量上升源于当前 27895/cqobdcyunkzadstj 前端探针持续 recv timeout → worker 失败-重建循环，属上游服务波动（与 T2 定性 5 同源）。若未来需进一步降噪，可做前端级失败聚合（超出本轮范围）。
+### 10MB 滚动与增速
+- 生产未触达 10MB 阈值（seley 自 truncate 起累计 <1MB）；滚动行为由 `test_xlog_roll_f.py` 10/10 离线覆盖。
+- 窗口后 20 分钟（11:19→11:39）增速：smart_router/x_tunnel/gae_proxy/launcher 均 0 B；seley +28.5KB（病态前端 connect 失败告警，真实信号）；tls_relay +5.4KB；cloudflare +2.6KB。按此速率 10MB 阈值在最坏日志上亦需数天，磁盘占用可控。
+### 审计判定
+seley trace 完全达标（-99.6%）；not enough ip ≤1 条/分/实例达标且全部带抑制标记；reserved/frag 归零；零 ERROR；增速受控。唯一未降项 seley HEAD 已定性为上游波动 + 结构必然，非回归非缺陷。F 阶段至此收尾：时间线回填与代码/文档随本 commit 入库。

@@ -65,3 +65,16 @@
 ## 八、遗留验证（进行中）
 
 「入库源码 == 运行中 .so」的完整验证链（Q1 zip↔01d935f diff、Q2 入库树↔三元组复核、Q3 源码↔.so 证据链与金标准重建）方案与结论见 `boringssl-arm64/BUILD-macOS-ARM64.md` 的「源码-产物匹配性验证（2026-10-27）」章节。**已完成（2026-10-27）：Q1-Q3 全部通过，判定「可用（可复现级）」**。
+
+## 九、日志治理 F 阶段（2026-10-27—10-28，Warp 会话完成）
+
+- 归档止损：7 份 warning 日志（约 237MB）归档 `backups/logs-20261027/` 并 zip 入库（commit 7738967）；225MB seley 日志 gzip 至约 1%；5 个运行中热日志 cp 后 truncate 止损（O_APPEND fd 安全实证）。
+- 分析定性：三类告警洪水（smart_router reserved/frag、not enough ip、seley retry/HEAD trace）均非逻辑 bug，分别降噪/节流处置；OSError(65/51) 定性为网络环境波动；三分类真问题清单见修复记录 F 章 T2。
+- 代码改动（5 文件，`Coding/XX-Net-5.16.7.1/` 快照内，rsync 至 /Applications/XX-Net）：
+  - `lib/noarch/xlog.py`：warning_log 10MB 单份滚动（`.1`）+ `LogThrottle` 通用节流类
+  - `smart_router/local/dns_server.py`：reserved/frag warn → debug
+  - `lib/noarch/front_base/connect_manager.py`：not enough ip 60s 节流
+  - `lib/noarch/front_base/http_dispatcher.py`：retry_task_cb 按 URL 60s 节流
+  - `lib/noarch/front_base/http1.py`：HEAD 探测失败按 worker 60s 节流
+- 验证：py_compile ×5；新增第 7 套离线测试 `test_xlog_roll_f.py`（10/10）；既有 6 套离线测试全部通过。
+- 上线与审计：用户 2026-10-28 10:44 亲自重启（PID 14268）后 35 分钟审计窗口——`retry_task_cb` trace 846→3、reserved/frag 32,596→0、not enough ip 速率降至 0.17-0.20 条/分/实例且全部带抑制标记、零 ERROR、代理 204 回归通过；唯一未降项 seley HEAD 已定性（上游波动+结构必然，非回归）。详见修复记录 F 章 T4 节。

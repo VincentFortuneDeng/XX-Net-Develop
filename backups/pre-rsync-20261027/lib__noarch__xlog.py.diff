@@ -1,0 +1,121 @@
+--- /Applications/XX-Net/code/default/lib/noarch/xlog.py	2026-09-28 16:42:14
++++ /Users/solvan/Downloads/XX-Net-Develop/Coding/XX-Net-5.16.7.1/code/default/lib/noarch/xlog.py	2026-10-27 20:58:44
+@@ -63,7 +63,13 @@
+ 
+         if log_path and save_warning_log:
+             self.warning_log_fn = os.path.join(log_path, "%s_warning.log" % (name))
++            # (F-phase 2026-10-27) warning log used to be unbounded (append);
++            # one module log reached 225MB. Bound it with a single rolling
++            # backup (.1) and a larger cap than the 1MB main log, see
++            # _roll_warning_log_if_needed().
++            self.warning_file_max_size = 10 * 1024 * 1024
+             self.warning_log = open(self.warning_log_fn, "a")
++            self._roll_warning_log_if_needed()
+         else:
+             self.warning_log_fn = None
+             self.warning_log = None
+@@ -102,6 +108,10 @@
+ 
+         if self.warning_log_fn and not self.keep_log:
+             self.warning_log = open(self.warning_log_fn, "a")
++            # (F-phase 2026-10-27) freshly reopened warning log can still be
++            # oversized on disk; enforce the cap here too. Single-threaded
++            # context: no concurrent log() writers exist for this logger yet.
++            self._roll_warning_log_if_needed()
+ 
+     def keep_logs(self):
+         self.keep_log = True
+@@ -170,6 +180,29 @@
+ 
+         self.log_fd = open(file_name, "a+")
+ 
++    def _roll_warning_log_if_needed(self):
++        # (F-phase 2026-10-27) Single-backup roll for the warning log.
++        # Mirrors roll_log()/set_file() but keeps only one generation
++        # (".1"): disk usage is bounded at ~2x warning_file_max_size.
++        # Must be called with buffer_lock held (log() write path) or before
++        # any concurrent writer exists (__init__ / reset_log_files).
++        try:
++            if os.path.isfile(self.warning_log_fn) and \
++                    os.path.getsize(self.warning_log_fn) > self.warning_file_max_size:
++                self.warning_log.close()
++                self.warning_log = None
++                shutil.move(self.warning_log_fn, self.warning_log_fn + ".1")
++                self.warning_log = open(self.warning_log_fn, "a")
++        except Exception:
++            # Keep logging alive even if roll fails (disk full, permission...);
++            # on failure warning_log may be None and writes are skipped, same
++            # as the main-log failure path.
++            if self.warning_log is None:
++                try:
++                    self.warning_log = open(self.warning_log_fn, "a")
++                except Exception:
++                    pass
++
+     def roll_log(self):
+         for i in range(self.roll_num, 1, -1):
+             new_name = "%s.%d" % (self.log_filename, i)
+@@ -226,11 +259,15 @@
+                     self.start_log = None
+ 
+             if self.warning_log and level in ["WARN", "WARNING", "ERROR", "CRITICAL"]:
+-                self.warning_log.write(string)
+-                try:
+-                    self.warning_log.flush()
+-                except:
+-                    pass
++                # (F-phase 2026-10-27) bound warning log size before writing,
++                # inside buffer_lock like the main-log roll above.
++                self._roll_warning_log_if_needed()
++                if self.warning_log:
++                    self.warning_log.write(string)
++                    try:
++                        self.warning_log.flush()
++                    except:
++                        pass
+ 
+             if self.buffer_size:
+                 self.last_no += 1
+@@ -311,6 +348,42 @@
+         return json.dumps(jd)
+ 
+ 
++class LogThrottle(object):
++    # (F-phase 2026-10-27) Rate limit for hot warn lines that are real
++    # signals but flood the warning log (F-phase findings: retry_task_cb
++    # bursts >200/hour during front outages). allow() returns
++    # (allowed, suppressed_count): the first hit in a window logs
++    # immediately, later hits are only counted, and the first hit after the
++    # window reports how many were hidden. Callers keep their control flow;
++    # only the log line is rate-limited.
++    def __init__(self, interval):
++        self.interval = interval
++        self.lock = threading.Lock()
++        self.hits = {}  # key => [last_logged_ts, suppressed_count]
++
++    def allow(self, key):
++        now = time.time()
++        with self.lock:
++            entry = self.hits.get(key)
++            if entry is not None and now - entry[0] < self.interval:
++                entry[1] += 1
++                return False, entry[1]
++
++            suppressed = entry[1] if entry is not None else 0
++            self.hits[key] = [now, 0]
++            if len(self.hits) > 512:
++                self._prune(now)
++            return True, suppressed
++
++    def _prune(self, now):
++        # called with lock held; drop expired keys so long-tail keys
++        # cannot grow the dict unbounded (same policy as the 512-cap
++        # used by pipe_socks warn_send_block).
++        for k in list(self.hits):
++            if now - self.hits[k][0] >= self.interval:
++                del self.hits[k]
++
++
+ class null():
+     @staticmethod
+     def debug(fmt, *args, **kwargs):

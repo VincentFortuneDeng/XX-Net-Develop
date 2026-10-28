@@ -23,6 +23,8 @@ import threading
 import time
 import traceback
 
+from xlog import LogThrottle
+
 from utils import SimpleCondition
 from queue import Queue
 import utils
@@ -99,6 +101,11 @@ class HttpsDispatcher(object):
             "received": 0
         }
         self.ping_speed_ip_str_last_active = {}  # ip_str => last_active
+
+        # (F-phase 2026-10-27) retry_task_cb is a real outage signal but
+        # flooded the warning log (200+/hour in seley bursts). Rate-limit
+        # the log line per task url; retry logic itself is untouched.
+        self.retry_log_throttle = LogThrottle(60)
 
         self.trigger_create_worker_cv = SimpleCondition()
         self.wait_a_worker_cv = SimpleCondition()
@@ -397,7 +404,17 @@ class HttpsDispatcher(object):
         self.fail_num += 1
         self.continue_fail_num += 1
         self.last_fail_time = time.time()
-        self.logger.warn("retry_task_cb: %s, trace:%s", task.url, task.get_trace())
+        # (F-phase 2026-10-27) log line only; retry state machine below is
+        # untouched. First hit logs immediately, window hits are counted and
+        # reported on the next allowed line. Keyed by url: one line per url
+        # per minute still shows the failing endpoint.
+        allowed, suppressed = self.retry_log_throttle.allow(task.url)
+        if allowed:
+            if suppressed:
+                self.logger.warn("retry_task_cb: %s, trace:%s (suppressed %d)",
+                                 task.url, task.get_trace(), suppressed)
+            else:
+                self.logger.warn("retry_task_cb: %s, trace:%s", task.url, task.get_trace())
 
         if task.responsed:
             self.logger.warn("retry but responses. %s", task.url)

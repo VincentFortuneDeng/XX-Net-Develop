@@ -25,6 +25,11 @@ class Http1Worker(HttpWorker):
         self.version = "1.1"
         self.task = None
         self.transfered_size = 0
+        # (F-phase 2026-10-27) head_request keep-alive probe warn throttle
+        # state. warn/close are only invoked from this worker's own
+        # work_loop thread, so plain attributes are safe (no lock needed).
+        self.last_head_fail_warn = 0
+        self.suppressed_head_fail_warn = 0
         self.trace_time = []
         self.trace_time.append([ssl_sock.create_time, "connect"])
         self.record_active("init")
@@ -284,8 +289,20 @@ class Http1Worker(HttpWorker):
             self.last_recv_time = time.time()
             return True
         except Exception as e:
-            self.logger.warn("h1 %s HEAD keep alive request fail:%r", self.ssl_sock.ip_str, e)
-            self.logger.warn('%s trace:%s', self.ip_str, self.get_trace())
+            # (F-phase 2026-10-27) keep-alive probe failure is a real signal
+            # (worker gets rechecked/closed below) but the probe runs every
+            # few seconds per worker, so log at most once per 60s per worker
+            # with a suppressed counter. Probe/recheck logic is untouched.
+            now = time.time()
+            if now - self.last_head_fail_warn >= 60:
+                suppressed = self.suppressed_head_fail_warn
+                self.suppressed_head_fail_warn = 0
+                self.last_head_fail_warn = now
+                self.logger.warn("h1 %s HEAD keep alive request fail:%r", self.ssl_sock.ip_str, e)
+                self.logger.warn('%s trace:%s%s', self.ip_str, self.get_trace(),
+                                 " (suppressed %d)" % suppressed if suppressed else "")
+            else:
+                self.suppressed_head_fail_warn += 1
             return False
         finally:
             self.request_onway = False
