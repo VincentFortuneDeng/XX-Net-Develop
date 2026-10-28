@@ -593,3 +593,35 @@ QC 计划 A1-A7/B1-B6/C/E/D 全部完成；四项修复 + 质检加固在生产�
 - 窗口后 20 分钟（11:19→11:39）增速：smart_router/x_tunnel/gae_proxy/launcher 均 0 B；seley +28.5KB（病态前端 connect 失败告警，真实信号）；tls_relay +5.4KB；cloudflare +2.6KB。按此速率 10MB 阈值在最坏日志上亦需数天，磁盘占用可控。
 ### 审计判定
 seley trace 完全达标（-99.6%）；not enough ip ≤1 条/分/实例达标且全部带抑制标记；reserved/frag 归零；零 ERROR；增速受控。唯一未降项 seley HEAD 已定性为上游波动 + 结构必然，非回归非缺陷。F 阶段至此收尾：时间线回填与代码/文档随本 commit 入库。
+# G 预研：节流机制盘点与尾账分析（2026-10-28 午，无代码改动）
+背景：用户追问 F 阶段节流是否存在「旧机制（内存累计、无后续日志导致不落盘/丢失）」同款风险。本章为全库盘点与机制分析，供后续 Agent 直接接手；结论已获用户确认的改进方案见末节「待实施提案」。
+## 全库节流点盘点（共 5 处 + 1 个公共工具类）
+排查方法：grep throttle/suppress/ratelimit/_last_warn 等，逐文件读原文排除假阳性（`hyper/ssl_compat.py` 的 `suppress_ragged_eofs` 是 SSL 库参数；`web_ui/js/bootstrap.min.js` 的 throttle 是前端防抖，均与日志无关）。
+1. **`pipe_socks.py` `warn_send_block`（47-68）+ B6 临终结算（189-198）**：1 秒窗，按 socket（`id(s)`）记账，有抑制计数，close 时强制结算。10-26 四项修复 4 + B6。
+2. **`connect_manager.py` `not enough ip`（309-313）**：60 秒窗，全局唯一账本（`last_no_ip_warn`/`suppressed_no_ip_warn`）。F 阶段。
+3. **`http1.py` `head_request`（291-306）**：60 秒窗，按 worker 记账（`last_head_fail_warn`/`suppressed_head_fail_warn`）。F 阶段。
+4. **`http_dispatcher.py` `retry_task_cb`（411）**：60 秒窗，按 task.url 记账，用 `xlog.py:351` `LogThrottle`。F 阶段。
+5. **`ip_manager.py` `get_ip_sni_host`（119-125）**：IPv6 前端跳过 INFO，按探测周期（300s）限频，**无计数器账本**（每条现算现打），不存在丢账问题。10-26 B5。
+## 尾账（tail account）机制分析：B6 为何不丢 vs F 阶段三处为何会丢
+核心结论：**B6 的账户（socket）有必然到来的葬礼（close），F 阶段的账户（url/全局状态）没有**。每笔抑制账有两个结算机会，谁先到谁结算：① 下一次同类事件来时随放行行结算（正常还款）；② 账户消亡时临终清算（B6 的 `(final suppressed N)`）。两条路必走其一 → 不丢账。F 阶段三处只有机会①，事件永久沉默时尾账随进程消失。
+- **处 1（B6）**：严密。事实一：每个 socket 必走一次 close（正常/异常/停机 `stop()` 74-80 与 pipe 线程退出前 455-457 都会逐个 close，葬礼迟到不缺席）。事实二：`warn_send_block` 与 `close` 同在 pipe 单线程（单线程不变式，pop 无需锁）。已知边界：`id(s)` 复用 ±1 秒窗口（文档既有记录）。
+- **处 4（LogThrottle）**：url 是字符串非对象，无「url 关闭」事件，沉默即尾账。改进不能抄 B6（无葬礼可用），只能脉冲结算（分期还款）。
+- **处 2（not enough ip）**：有「半个葬礼」可用而 F 阶段未挂——池恢复（`get_ip_sni_host()` 重新返回非 None）即可观测，可补打「枯竭结束共抑制 N 条」（B6 的镜像）。F 阶段未做的原因：该计数器注释即声明 "currently a counter only, for diagnosis"，设计上只做内部诊断从不打印。但 grep 证实全库无读取者，按「累计即应结算」标准应补。
+- **处 3（HEAD）**：有葬礼（worker.close）但账本结构性永远为空——`head_request` 失败后调用方 `http1.py:112-115` 立即 `close("keep alive")`，每 worker 生命周期至多失败 1 次，抑制分支不可达（T4 全窗口 0 个 `(suppressed N)` 实证）。加临终结算是给永远为空的账本办清算，F 阶段选择不加、记录在案。
+## 两处专题图解（用户追问的通俗版）
+### not enough ip：功能状态与日志账本是两套互不相干的状态
+- 功能作用：`no_ip_time = now`（`_connect_process` 309-315 行所在分支）让其他连接线程在 `_connect_thread:282` 判断 `time.time() - self.no_ip_time > 10` 而歇 10 秒，避免空转烧 CPU——这是官方既有功能，与日志无关。
+- 日志价值：前端池枯竭时连接线程一圈圈空转，若无此告警表现为「代理变慢但一切静默」；这行 WARN 是枯竭的唯一可见证据，T2 定性为真实信号，值得保留。
+- 计数器现状：`suppressed_no_ip_warn` 只写不读（grep 全库仅定义+自增两处），无消费者，随进程消失——方案 5（恢复即结算）就是给它接上消费者。
+- 时序：池枯竭期间每轮循环（约 1 秒）走一遍「get_ip_sni_host 返回 None → no_ip_time=now → 日志判定（满 60s 写盘/未满 suppressed+1）→ sleep(1)」；池恢复后循环不再进入该分支，故事结束但正字永不结算。
+### HEAD worker 节流：抑制分支生产中不可达，属零成本保险
+- 时序：keep_alive 定时器隔几秒发 ping → worker 调 `head_request()`（GET / 探活）→ 成功返回 True 无日志；失败进 except 分支 → 判 60s（事实上永远满足，因 worker 即将死亡）→ 写 1 条 WARN+trace → `recheck_ip` + `close("keep alive")` worker 终结 → 调度器新建 worker（新账本归零）。
+- WARN 本身有用：每个探活失败的 worker 恰留 1 条真实告警（前端连不上、IP 已进复核）。T4 中 HEAD 186→14 未降系上游坏前端多、worker 频繁重建，每 worker 死一次留一条，量与上游波动成正比，与节流无关。
+- 节流判定：今天不可达但无害（两个整数属性）；若未来 head_request 改为同 worker 重试多次（常见改动），保险自动生效。离线测试 B 组已验证实现正确。结论：保留并在文档标明「当前不可达」，不做删改（用户可选删除，代码极简主义同样成立）。
+## 与旧机制（B6 前）的本质区别（用户原问「旧问题是否复现」的最终答案）
+旧缺陷（B6 前 warn_send_block）：挂账的 suppressed 结算需未来事件偿还，账期无上限，且 `id(s)` 复用会把旧账错挂到不相干新 socket（错账，非丟账）。B6 补 close 结算后闭环。F 阶段机制：时间窗过期账目自动作废，无错账可能；最坏损失收窄为「最后窗口的量级注解」，且每窗口首行信号任何情况下已实时落盘。无内容级丢失，无内存累计。
+## 待实施提案（用户已认可方向，未实施，等确认后执行）
+- **方案 1（脉冲结算，处 4 LogThrottle）**：窗口内每攒满 N 条（建议 100）放行一条带 `(suppressed N, throttled)` 的行并重新计数；尾账上限从整个窗口计数降至 <N；洪水落盘行数被 N 钳住。改 `xlog.py` 约 5 行 + `test_xlog_roll_f.py` 用例更新。
+- **方案 5（恢复即结算，处 2 not enough ip）**：`_connect_process` 在 `get_ip_sni_host()` 成功分支检测 `suppressed_no_ip_warn > 0` 则补打「not enough ip recovered, suppressed N total」并清零。约 +3 行。
+- 处 1（B6）完备不动；处 3（HEAD）维持不动；处 5 无账本不涉及。
+- 实施清单：改代码 → py_compile → `test_xlog_roll_f.py` + 既有 6 套回归 → 更新本文档与 `LOCAL-VERSION.md` 补丁表 → commit（快照与 /Applications 同步需 rsync + 用户重启，另行安排）。
