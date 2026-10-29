@@ -5,7 +5,7 @@ import threading
 import xstruct as struct
 import hashlib
 
-from xlog import getLogger, keep_log
+from xlog import getLogger, keep_log, LogThrottle
 xlog = getLogger("x_tunnel")
 
 import utils
@@ -104,6 +104,7 @@ class ProxySession(object):
         self.last_state = {
             "timeout": 0,
         }
+        self.transfer_log_throttle = LogThrottle(60)
         if g.config.enable_tls_relay:
             threading.Thread(target=self.reporter, name="reporter").start()
 
@@ -162,6 +163,16 @@ class ProxySession(object):
             self.connection_pipe.start()
             xlog.info("session started.")
             return True
+
+    def transfer_warn(self, session_id, transfer_no, kind, fmt, *args):
+        allowed, suppressed = self.transfer_log_throttle.allow(
+            (session_id, transfer_no, kind))
+        if not allowed:
+            return
+        if suppressed:
+            fmt += " (suppressed %d)"
+            args += (suppressed,)
+        xlog.warn(fmt, *args)
 
     def timeout_checker(self):
         while self.running:
@@ -700,15 +711,17 @@ class ProxySession(object):
 
                 if data_info["server_received"] == False and server_local_time - data_info["start_time"] > g.config.send_timeout_retry:
                     data_info["stat"] = "timeout"
-                    xlog.warn("check_upload_not_acked found transfer_no:%d upload timeout:%f", no,
-                              server_local_time - data_info["start_time"])
+                    self.transfer_warn(data_info["session_id"], no, "check_upload_not_acked",
+                                       "check_upload_not_acked found transfer_no:%d upload timeout:%f", no,
+                                       server_local_time - data_info["start_time"])
                     timeout_num += 1
                     continue
 
                 if data_info["server_sent"] and server_time - data_info["server_sent"] > g.config.send_timeout_retry:
                     data_info["stat"] = "timeout"
-                    xlog.warn("check_upload_not_acked found transfer_no:%d down timeout:%f", no,
-                              server_time - data_info["server_sent"])
+                    self.transfer_warn(data_info["session_id"], no, "check_upload_not_acked",
+                                       "check_upload_not_acked found transfer_no:%d down timeout:%f", no,
+                                       server_time - data_info["server_sent"])
                     timeout_num += 1
                     continue
 
@@ -817,7 +830,8 @@ class ProxySession(object):
                     continue
 
                 if data_info["stat"] == "timeout":
-                    xlog.warn("retry transfer_no:%d t:%f", sn, time_now - data_info["start_time"])
+                    self.transfer_warn(data_info["session_id"], sn, "retry", "retry transfer_no:%d t:%f",
+                                       sn, time_now - data_info["start_time"])
                     data_info["stat"] = "retry"
                     data_info["retry"] += 1
                     data_info["start_time"] = time_now
@@ -954,8 +968,9 @@ class ProxySession(object):
 
             if status != 200:
                 head = upload_post_data2[:3]
-                xlog.warn("roundtrip time:%f transfer_no:%d send:%d head:%s status:%r ",
-                          roundtrip_time, transfer_no, send_data_len, utils.str2hex(head), status)
+                self.transfer_warn(request_session_id, transfer_no, "roundtrip_status",
+                                   "roundtrip time:%f transfer_no:%d send:%d head:%s status:%r ",
+                                   roundtrip_time, transfer_no, send_data_len, utils.str2hex(head), status)
                 data_info["stat"] = "timeout"
                 time.sleep(sleep_time)
                 continue
@@ -1095,9 +1110,10 @@ class ProxySession(object):
 
                 # xlog.debug("trip:%d no:%d recv data:%s", work_id, transfer_no, parse_data(data))
 
-        xlog.warn("roundtrip failed, no:%d target:%d on_road:%d timeout:%d send:%d",
-                   transfer_no, self.target_on_roads, self.on_road_num, server_timeout,
-                   len(upload_post_data))
+        self.transfer_warn(request_session_id, transfer_no, "roundtrip_failed",
+                           "roundtrip failed, no:%d target:%d on_road:%d timeout:%d send:%d",
+                           transfer_no, self.target_on_roads, self.on_road_num, server_timeout,
+                           len(upload_post_data))
         self.wait_queue.notify()
 
 

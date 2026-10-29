@@ -11,7 +11,7 @@ cloudflare_front = None
 
 from . import global_var as g
 import utils
-from xlog import getLogger
+from xlog import getLogger, LogThrottle
 import env_info
 
 current_path = os.path.dirname(os.path.abspath(__file__))
@@ -20,6 +20,7 @@ data_path = env_info.data_path
 data_xtunnel_path = os.path.join(data_path, 'x_tunnel')
 
 xlog = getLogger("x_tunnel", log_path=data_xtunnel_path, save_start_log=500, save_warning_log=True)
+front_retry_log_throttle = LogThrottle(60)
 
 
 def init():
@@ -187,7 +188,12 @@ def request(method, host, path="/", headers={}, data="", timeout=100):
             method, host=host, path=path, headers=dict(headers), data=data, timeout=timeout)
 
         if status not in [200, 521, 400, 404]:
-            xlog.warn("front retry %s%s", host, path)
+            allowed, suppressed = front_retry_log_throttle.allow((host, path))
+            if allowed:
+                if suppressed:
+                    xlog.warn("front retry %s%s (suppressed %d)", host, path, suppressed)
+                else:
+                    xlog.warn("front retry %s%s", host, path)
             time.sleep(1)
             continue
 

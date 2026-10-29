@@ -10,8 +10,8 @@ Checks:
      stays small, writes continue into the new main file
  A3) second overflow -> .1 replaced (single generation, no .2)
  A4) .1 kept intact at open time when main file oversized (init-time roll)
- B)  LogThrottle: first hit allowed, window hits suppressed, suppressed
-     count reported on next allowed hit, prune keeps dict bounded
+ B)  LogThrottle：首条放行、窗口内抑制并结算；超过 512 个活跃 key
+     仍可保留，剪枝仅删除过期 key，并发账本计数完整
  C)  HEAD probe failures aggregate by front ip_str across all exits and
      concurrent workers, with the previous window count on the next log
  D)  not-enough-ip lines settle the previous window and recovery emits
@@ -127,17 +127,55 @@ _time.sleep(0.02)
 allowed, sup = lt2.allow("k")
 check("B5 window expiry re-allows with 0 suppressed", allowed and sup == 0)
 
-# concurrent hammering: dict must stay bounded, no exceptions
-import threading
+# 512 只是触发剪枝的阈值，不是活跃 key 的硬上限。
 lt3 = LogThrottle(60)
+for i in range(600):
+    lt3.allow("active-%d" % i)
+check("B6 active keys beyond 512 retained", len(lt3.hits) == 600,
+      "len=%d" % len(lt3.hits))
+
+# 触发剪枝时只删除过期 key，未过期账本必须完整保留。
+class ThrottleClock(object):
+    def __init__(self):
+        self.now = 1000.0
+
+    def time(self):
+        return self.now
+
+throttle_clock = ThrottleClock()
+real_xlog_time = xlog_mod.time
+xlog_mod.time = throttle_clock
+try:
+    lt_prune = LogThrottle(60)
+    for i in range(512):
+        lt_prune.allow("old-%d" % i)
+    throttle_clock.now = 1030.0
+    fresh_keys = ["fresh-%d" % i for i in range(10)]
+    for key in fresh_keys:
+        lt_prune.allow(key)
+    throttle_clock.now = 1061.0
+    lt_prune.allow("new")
+    expected_keys = set(fresh_keys + ["new"])
+    check("B7 prune deletes only expired keys",
+          set(lt_prune.hits) == expected_keys,
+          "len=%d keys=%r" % (len(lt_prune.hits), sorted(lt_prune.hits)))
+finally:
+    xlog_mod.time = real_xlog_time
+
+# 每个 key 被命中 8 次，精确保留 7 次抑制可发现并发丢账。
+import threading
+lt4 = LogThrottle(60)
 def hammer(n):
     for i in range(n):
-        lt3.allow("k-%d" % (i % 800))
-threads = [threading.Thread(target=hammer, args=(200,)) for _ in range(8)]
+        lt4.allow("k-%d" % i)
+threads = [threading.Thread(target=hammer, args=(800,)) for _ in range(8)]
 [t.start() for t in threads]
 [t.join() for t in threads]
-check("B6 dict bounded under concurrency", len(lt3.hits) <= 512,
-      "len=%d" % len(lt3.hits))
+check("B8 concurrent ledger keeps every key and count",
+      len(lt4.hits) == 800
+      and all(entry[1] == 7 for entry in lt4.hits.values()),
+      "len=%d bad_counts=%d" %
+      (len(lt4.hits), sum(entry[1] != 7 for entry in lt4.hits.values())))
 
 # --- C: G-phase HEAD probe throttling, aggregated by front ip_str ---
 # Load the real worker/connect-manager modules with only their external
@@ -337,15 +375,29 @@ check("D4 recovery is once and ledger cleared",
 # --- E: H-phase _connect_ssl failure aggregation by front and error type ---
 from queue import Queue
 
+# 使用真实 __init__，仅替换会执行后台循环的 Thread；锁与 Condition 保持真实。
+class BackgroundThreadStub(object):
+    def __init__(self, target, name):
+        self.target = target
+        self.name = name
+        self.daemon = False
+
+    def start(self):
+        pass
+
+real_connect_threading = connect_manager_mod.threading
+connect_manager_mod.threading = types.SimpleNamespace(
+    Lock=threading.Lock, Condition=threading.Condition,
+    Thread=BackgroundThreadStub)
+
 def make_connect_ssl_manager(logger, error_type=RuntimeError):
-    manager = connect_manager_mod.ConnectManager.__new__(connect_manager_mod.ConnectManager)
-    manager.logger = logger
-    manager.config = types.SimpleNamespace(show_state_debug=False)
+    logger.name = "connect-test"
     def fail_connect(*args, **kwargs):
         raise error_type("connect boom")
-    manager.connect_creator = types.SimpleNamespace(connect_ssl=fail_connect)
-    manager.connect_ssl_log_throttle = LogThrottle(60)
-    return manager
+    connect_creator = types.SimpleNamespace(connect_ssl=fail_connect)
+    config = types.SimpleNamespace(show_state_debug=False, connection_pool_min=0)
+    return connect_manager_mod.ConnectManager(
+        logger, config, connect_creator, types.SimpleNamespace(), None)
 
 def connect_ssl_once(manager, ip_str, result_queue):
     manager._connect_ssl(ip_str, "sni", "host", None, result_queue)
@@ -394,6 +446,19 @@ connect_ssl_once(concurrent_manager, "192.0.2.12", concurrent_queue)
 check("E7 concurrent suppressed count settled",
       concurrent_connect_log.warnings[-1].endswith("(suppressed 19)"),
       "warnings=%r" % concurrent_connect_log.warnings)
+
+# 两个真实构造的实例对相同 front/错误分别放行首条，证明节流账本无共享。
+isolation_log = CaptureLogger()
+first_manager = make_connect_ssl_manager(isolation_log)
+second_manager = make_connect_ssl_manager(isolation_log)
+isolation_queue = Queue()
+connect_ssl_once(first_manager, "192.0.2.13", isolation_queue)
+connect_ssl_once(second_manager, "192.0.2.13", isolation_queue)
+check("E8 real init keeps instance throttles independent",
+      first_manager.connect_ssl_log_throttle is not second_manager.connect_ssl_log_throttle
+      and len(isolation_log.warnings) == 2 and isolation_queue.qsize() == 2,
+      "warnings=%r queue=%d" % (isolation_log.warnings, isolation_queue.qsize()))
+connect_manager_mod.threading = real_connect_threading
 
 print()
 if failures:

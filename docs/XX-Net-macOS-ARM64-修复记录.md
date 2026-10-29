@@ -664,7 +664,7 @@ v1 两方案经用户两轮追问后修订：核心洞察 ① not enough ip 每�
 - **背景流量（真实信号未节流，符合 T3 设计）**：seley 新窗口 `_connect_ssl ... fail:OSError TimeoutError`（病态前端 connect 失败）与 x_tunnel `POST ny3.xx-net.org / response_fail:retry timeout:30`（上游波动链路）仍逐条落盘。
 - **审计判定**：G 阶段（提案 A+B）全部生效——not enough ip 四要素齐全、恢复清账闭环、HEAD 折行达标、零 ERROR、代理回归 204。F/G 两阶段日志治理至此全部收尾。
 
-# H 阶段：建连失败聚合、DNS 退避与 total 语义修正（2026-10-29，无部署）
+# H 阶段：建连失败聚合、DNS 退避与 total 语义修正（2026-10-29）
 ## 问题澄清与范围
 - **`total 0` 的旧口径**：G 阶段的 `total_suppressed_no_ip_warn` 只累计被抑制事件，首条放行不计，因此单次旱态事件后恢复会显示 `total 0`。这符合旧实现定义，但 `total` 名称容易让人理解为总事件数。用户确认 H 阶段改为**本轮总事件数（放行+抑制）**，首次事件即为 1；G 章历史语义保留不改写。
 - **`LogThrottle` 的用途**：它是带锁的通用 60 秒节流工具，每个 key 的首个事件放行，窗口内后续事件只计数，下一窗口放行时返回上一窗 suppressed 数。H 前生产调用方为 `http_dispatcher.py` 的 `retry_task_cb`（按 URL）与 `http1.py` 的 HEAD 三出口（按前端 IP）；`not enough ip` 与 `pipe_socks` 各有独立账本，不使用该类。
@@ -680,4 +680,31 @@ v1 两方案经用户两轮追问后修订：核心洞察 ① not enough ip 每�
 - 既有回归：`test_dns_dot.py`、`test_try_add_remove_races.py`、`test_ipv6_filter.py`、`test_blockio_ratelimit.py`、`test_dns_nameserver_filter.py` 均 **ALL PASSED**；`probe_wrap_socket_fd.py` 结论保持 **A(detached)**；`git diff --check` 通过。
 - 新测试按相对路径加载 Coding 快照；既有根目录测试仍加载 `/Applications/XX-Net` 当前安装，未部署时用于证明实装既有行为无回归。DNS 测试加载时出现的 `dnslib/lex.py` 转义 `SyntaxWarning` 为既有依赖代码，本轮未改。
 ## 生效边界
-H 阶段仅落盘仓库快照，未 rsync、未重启、未部署，当前运行进程不受影响。`_connect_ssl` 沿用 `LogThrottle` 的下一放行结算边界，不增加成功清账或后台尾账；DNS 的「发送成功」只表示本地 `sendto` 成功，不扩展为 nameserver 健康判定。
+H 阶段代码与测试完成时仅落盘仓库快照，尚未影响当时运行进程。`_connect_ssl` 沿用 `LogThrottle` 的下一放行结算边界，不增加成功清账或后台尾账；DNS 的「发送成功」只表示本地 `sendto` 成功，不扩展为 nameserver 健康判定。
+## 部署与重启后审计（2026-10-29）
+- **部署范围**：仅覆盖 `connect_manager.py` 与 `dns_query.py` 到 `/Applications/XX-Net` 对应路径；覆盖前备份为 `backups/pre-rsync-20261029-h/`，含两份 `.orig` 与两份 `.diff`。rsync 后快照与安装版 SHA-256 分别一致：connect_manager `aad05766b18db85e38f2dab92c1bafd3c8906423ba22c6fcb196d488f4c50c2f`，dns_query `a6c797e750492dbdb419db4bb30c963d204088febc0ca80f44da254da1cf5460`。
+- **新进程确认**：用户重启后 launcher PID 2066，启动时间 `2026-10-29 19:00:28`，命令为 `Python code/default/launcher/start.py`，8086 端口 LISTEN/OPEN，确认晚于部署加载 H 代码。
+- **`_connect_ssl` 生效**：重启后日志已出现新 `(suppressed N)` 尾缀；同 IP+异常类别的重复失败被聚合，不同 key 独立放行。
+- **total 新口径生效**：多条恢复日志为 `not enough ip recovered (suppressed 0, total 1)`，首次事件已计为 1。微旱态在最初约 16 分钟内约 5 对、每轮约 10–11 秒，频率不高，继续保留及时 WARN，不做降级或延迟。
+- **DNS 延长观察**：19:00:28–20:22:15（约 82 分钟）检查 smart_router warning/start 日志，`EHOSTUNREACH`、`ENETUNREACH`、Errno 65/51 及 `send_request` 冷却记录均为 0。本窗口未触发目标错误，只能确认无相关日志，不能据此声称退避的现场疗效；旧进程时期的 DNS 洪水停止也不归因于 H。
+
+# I 阶段：前端重试与 x_tunnel 故障链日志聚合（2026-10-29）
+## 重启后复评与范围
+- H 部署后的生产日志改变了剩余事项优先级：一次前端/x_tunnel 波动可产生约百条关联 WARN。cloudflare 的 `retry_task_cb` 12 条日志有 12 个不同 tid URL，却全部来自同一前端 `198.18.0.159`；同窗口另有 task timeout 12 条、req response timeout 12 条。x_tunnel 约 69 行中包括 retry transfer_no 17、check_upload_not_acked 15、front retry 13、roundtrip status:602 12、roundtrip failed 12。
+- 因此 P1 调整为修正 dispatcher 重试日志 key，并按 session/transfer 聚合 x_tunnel 重复告警；P2 仅补强节流、DNS 和实例隔离测试。DNS 继续观察；微旱态不改；`LogThrottle` 不做生产容量改造。
+- 硬边界：只改日志，不改重试、状态、Queue、连接评分、传输或返回路径；不做四个 front.py 的 `req get response timeout`、完整 episode 框架、公共脉冲结算或全局 ERROR 限流。I 阶段部署、rsync 与重启需用户另行确认。
+## 实施改动
+1. **dispatcher 重试 key 修正（`http_dispatcher.py`）**：新增内部日志 key/helper，复用现有实例级 `retry_log_throttle = LogThrottle(60)`。key 为 `(task.method, task.host, 去查询参数 endpoint bytes, front ip)`，去掉递增 tid；endpoint 全程使用 bytes，避免非 UTF-8 path 因日志解码中断重试或丢弃响应。`retry_task_cb()` 与 `request()` 的 task timeout/status 共用同一窗口。放行行仍保留完整 URL/tid 与 trace，仅在 suppressed>0 时附计数。fail 计数、重试次数、Queue、notify、响应与返回路径未改。
+2. **x_tunnel 按 transfer 聚合（`proxy_session.py`）**：后台线程启动前创建实例级 `transfer_log_throttle = LogThrottle(60)`；`transfer_warn()` 只负责日志，显式接收事件所属 session，key 为 `(session_id, transfer_no, kind)`。roundtrip 使用网络请求前捕获的 `request_session_id`，retry/ack timeout 使用对应 `data_info["session_id"]`，避免 reset 后旧响应按新 session 错账。接入 `check_upload_not_acked`、get_upload_data retry、非 200 roundtrip 和最终 `roundtrip failed` 四处，kind 相互独立。原始字段保留，下一窗附 suppressed；`data_info["stat"]`、retry、`target_on_roads`、notify、sleep 与传输逻辑未改。
+3. **front retry 聚合（`front_dispatcher.py`）**：模块级 `LogThrottle(60)` 按完整 `(host, path)` 聚合。相同 tid 的重复重试只放行一条，不同 tid 各自保留首条；front 选择、状态码处理、sleep、重试与请求内容未改。
+4. **测试语义补强（仅测试）**：`LogThrottle` 契约改为真实语义——超过 512 个活跃 key 可保留，触发剪枝只删过期 key，并精确验证并发计数；DNS 同时覆盖 EHOSTUNREACH/ENETUNREACH 及冷却期 DEBUG；`_connect_ssl` 通过真实 `ConnectManager.__init__`、stub 后台线程验证实例隔离。未为满足测试修改生产代码。
+## TDD 与完整验证
+- **RED**：Task 1 新测试在旧实现上 8/8 按目标失败；Task 2 在生产快照上因真实初始化缺少 `transfer_log_throttle` 触发预期断言失败。Task 3 是对既有正确行为的覆盖补强，新断言首次运行即通过，不伪称 RED，也未发现生产缺陷。
+- **GREEN**：`test_retry_log_throttle.py` **9/9 PASS**；`test_xtunnel_log_throttle.py` **8/8 PASS**；`test_xlog_roll_f.py` **33/33 PASS**（滚动 7 + LogThrottle 8 + HEAD 6 + no-IP 4 + `_connect_ssl` 8）；`test_dns_ns_backoff.py` **9/9 PASS**（N1/N2 各覆盖两种 errno，另含 N3–N7）。
+- 三个 I 阶段生产文件 `py_compile` 全部通过；既有 `test_dns_dot.py`、`test_try_add_remove_races.py`、`test_ipv6_filter.py`、`test_blockio_ratelimit.py`、`test_dns_nameserver_filter.py` 均 **ALL PASSED**；`probe_wrap_socket_fd.py` 结论保持 **A(detached)**；`git diff --check` 通过。
+- 测试验证了聚合不会减少重试入队、异常/响应送达、状态迁移或 notify；20 线程下同 key 仅一条 WARN。DNS 测试加载时仍可能出现既有 `dnslib/lex.py` 转义 `SyntaxWarning`，本轮未修改依赖。
+## 独立审查与修复
+- 独立全量审查首次因 API 限流中断，接续后完成。无 Critical；两项 Important 均经最小真实路径复现并在一轮修复中完成：R9 证明旧实现遇到非 UTF-8 path 时重试次数为 0、响应变 `None`，改用 bytes key 后重试/响应/fail/notify 全部保持；X8 证明 reset 后旧响应会与新 session 同 transfer 错账，改用请求捕获的 session 后两类状态 WARN 各自放行。两项均先 RED 后 GREEN，随后完整回归再次全部通过。
+- Minor 延后：非 200 roundtrip 原格式串末尾已有空格，suppressed 结算行会出现双空格；不影响语义，本轮不做格式润色。明确排除的微旱态、生产容量、完整 episode、全局 ERROR 限流、其他 front timeout 和既有传输并发设计均不在本轮扩展实施。
+## 生效边界
+I 阶段仅落盘仓库快照，当前 `/Applications/XX-Net` 运行进程仍是 H 代码；未部署、未重启、未 push。上述结果均为离线测试证据，生产收敛幅度需在用户另行确认部署并重启后审计。

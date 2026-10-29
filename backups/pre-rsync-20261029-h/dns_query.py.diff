@@ -1,0 +1,69 @@
+--- /Applications/XX-Net/code/default/smart_router/local/dns_query.py	2026-10-27 12:38:14
++++ Coding/XX-Net-5.16.7.1/code/default/smart_router/local/dns_query.py	2026-10-29 18:33:46
+@@ -3,6 +3,7 @@
+ 
+ # public DNS servers https://en.wikipedia.org/wiki/Public_recursive_name_server
+ 
++import errno
+ import json
+ import os
+ import sys
+@@ -135,6 +136,8 @@
+         self.timeout = timeout
+         self.waiters = lru_cache.LruCache(100)
+         self.dns_server = self.get_local_dns_server()
++        self.ns_backoff = {}
++        self.ns_backoff_lock = threading.Lock()
+ 
+         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+         self.sock6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+@@ -282,6 +285,25 @@
+                 self.sock.sendto(req4_pack, (server_ip, 53))
+             else:
+                 self.sock6.sendto(req4_pack, (server_ip, 53))
++            with self.ns_backoff_lock:
++                self.ns_backoff.pop(server_ip, None)
++        except OSError as e:
++            if e.errno not in (errno.EHOSTUNREACH, errno.ENETUNREACH):
++                xlog.warn("send_request except:%r", e)
++                return
++
++            now = time.time()
++            with self.ns_backoff_lock:
++                cooldown_until = self.ns_backoff.get(server_ip, 0)
++                if cooldown_until > now:
++                    in_cooldown = True
++                else:
++                    in_cooldown = False
++                    self.ns_backoff[server_ip] = now + 60
++            if in_cooldown:
++                xlog.debug("send_request %s except:%r during cooldown", server_ip, e)
++            else:
++                xlog.warn("send_request %s except:%r, cooldown for 60s", server_ip, e)
+         except Exception as e:
+             xlog.warn("send_request except:%r", e)
+ 
+@@ -313,7 +335,22 @@
+         que = Queue()
+         que.domain = domain
+ 
+-        for server_ip in self.dns_server:
++        now = time.time()
++        candidates = []
++        cooled_servers = []
++        with self.ns_backoff_lock:
++            for server_ip in self.dns_server:
++                cooldown_until = self.ns_backoff.get(server_ip)
++                if cooldown_until is not None and cooldown_until > now:
++                    cooled_servers.append((server_ip, cooldown_until))
++                else:
++                    self.ns_backoff.pop(server_ip, None)
++                    candidates.append(server_ip)
++        if not candidates and cooled_servers:
++            # 全部冷却时仅探测最早到期的一台，避免 DNS 完全中断或集中恢复。
++            candidates = [min(cooled_servers, key=lambda item: item[1])[0]]
++
++        for server_ip in candidates:
+             new_time = time.time()
+             if new_time > end_time:
+                 break

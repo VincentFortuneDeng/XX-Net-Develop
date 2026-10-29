@@ -104,19 +104,25 @@ def make_query(error=None):
     return inst
 
 
-# 路由不可达：首条 WARN 带 server，60 秒冷却且失败不延长。
-q = make_query(OSError(errno.EHOSTUNREACH, "No route to host"))
-rec.lines.clear()
-q.send_request(1, S1, b"example.com", 1)
-check("N1 route error warns with server and sets cooldown",
-      q.ns_backoff.get(S1) == 160.0 and len(rec.warnings()) == 1
-      and "1.1.1.1" in rec.warnings()[0],
-      "backoff=%r warnings=%r" % (q.ns_backoff, rec.warnings()))
-fake_time.now = 101.0
-q.send_request(2, S1, b"example.com", 1)
-check("N2 cooldown repeat is quiet and does not extend",
-      q.ns_backoff.get(S1) == 160.0 and len(rec.warnings()) == 1,
-      "backoff=%r warnings=%r" % (q.ns_backoff, rec.warnings()))
+# 两类路由不可达等价：首条 WARN 带 server，冷却重复仅新增 DEBUG。
+for route_errno in (errno.EHOSTUNREACH, errno.ENETUNREACH):
+    error_name = errno.errorcode[route_errno]
+    fake_time.now = 100.0
+    q = make_query(OSError(route_errno, os.strerror(route_errno)))
+    rec.lines.clear()
+    q.send_request(1, S1, b"example.com", 1)
+    check("N1 %s warns with server and sets cooldown" % error_name,
+          q.ns_backoff.get(S1) == 160.0 and len(rec.lines) == 1
+          and len(rec.warnings()) == 1 and "1.1.1.1" in rec.warnings()[0],
+          "backoff=%r lines=%r" % (q.ns_backoff, rec.lines))
+    fake_time.now = 101.0
+    q.send_request(2, S1, b"example.com", 1)
+    check("N2 %s cooldown repeat adds one DEBUG without extending" % error_name,
+          q.ns_backoff.get(S1) == 160.0 and len(rec.warnings()) == 1
+          and len(rec.lines) == 2 and rec.lines[-1][0] == "DEBUG"
+          and "1.1.1.1" in rec.lines[-1][1]
+          and "during cooldown" in rec.lines[-1][1],
+          "backoff=%r lines=%r" % (q.ns_backoff, rec.lines))
 
 # 其他错误不属于路由退避。
 fake_time.now = 100.0

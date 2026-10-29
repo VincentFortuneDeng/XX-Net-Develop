@@ -1,0 +1,69 @@
+--- /Applications/XX-Net/code/default/lib/noarch/front_base/connect_manager.py	2026-10-28 19:46:56
++++ Coding/XX-Net-5.16.7.1/code/default/lib/noarch/front_base/connect_manager.py	2026-10-29 18:31:47
+@@ -23,6 +23,7 @@
+ from queue import Queue
+ 
+ from .openssl_wrap import SSLConnection
++from xlog import LogThrottle
+ 
+ class NoRescourceException(Exception):
+     pass
+@@ -166,11 +167,11 @@
+         self._connection_waiting_num = 0
+         self.no_ip_lock = threading.Lock()
+         self.no_ip_time = 0
+-        # (G 阶段 2026-10-28) not enough ip 告警账本：当前窗口计数、
+-        # 本轮旱态累计抑制数；恢复时结算尾窗并一次性清零。
++        # (H 阶段 2026-10-29) total 统计本轮全部旱态事件（放行+抑制）。
+         self.last_no_ip_warn = 0
+         self.suppressed_no_ip_warn = 0
+-        self.total_suppressed_no_ip_warn = 0
++        self.total_no_ip_events = 0
++        self.connect_ssl_log_throttle = LogThrottle(60)
+ 
+         # after new created ssl_sock timeout(50 seconds)
+         # call the callback.
+@@ -302,7 +303,8 @@
+                 now = time.time()
+                 with self.no_ip_lock:
+                     self.no_ip_time = now
+-                    # 每次放行结算上一窗口；累计计数保留到恢复通告。
++                    self.total_no_ip_events += 1
++                    # 每次放行结算上一窗口；总事件数保留到恢复通告。
+                     if now - self.last_no_ip_warn >= 60:
+                         self.logger.warning("not enough ip (suppressed %d last window, suppressing for 60s after this line)",
+                                             self.suppressed_no_ip_warn)
+@@ -310,7 +312,6 @@
+                         self.suppressed_no_ip_warn = 0
+                     else:
+                         self.suppressed_no_ip_warn += 1
+-                        self.total_suppressed_no_ip_warn += 1
+                     time.sleep(1)
+                 return None
+ 
+@@ -319,10 +320,10 @@
+                 if self.last_no_ip_warn:
+                     self.logger.warning("not enough ip recovered (suppressed %d, total %d)",
+                                         self.suppressed_no_ip_warn,
+-                                        self.total_suppressed_no_ip_warn)
++                                        self.total_no_ip_events)
+                     self.last_no_ip_warn = 0
+                     self.suppressed_no_ip_warn = 0
+-                    self.total_suppressed_no_ip_warn = 0
++                    self.total_no_ip_events = 0
+ 
+             # self.logger.debug("create ssl conn %s", ip_str)
+             ssl_sock = self._create_ssl_connection(host_info)
+@@ -347,7 +348,11 @@
+             ssl_sock = self.connect_creator.connect_ssl(ip_str, sni, host, close_cb=close_cb)
+             queue.put(ssl_sock)
+         except Exception as e:
+-            self.logger.warn("_connect_ssl %s sni:%s host:%s fail:%r", ip_str, sni, host, e)
++            allowed, suppressed = self.connect_ssl_log_throttle.allow((ip_str, type(e).__name__))
++            if allowed:
++                suffix = " (suppressed %d)" % suppressed if suppressed else ""
++                self.logger.warn("_connect_ssl %s sni:%s host:%s fail:%r%s",
++                                 ip_str, sni, host, e, suffix)
+             queue.put(e)
+ 
+     def _create_ssl_connection(self, host_info):
