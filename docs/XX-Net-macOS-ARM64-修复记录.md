@@ -663,3 +663,21 @@ v1 两方案经用户两轮追问后修订：核心洞察 ① not enough ip 每�
 - **提案 B 实证（HEAD 按前端聚合）**：seley 新窗口 HEAD WARN 仅 5 条，来自 3 个不同前端（56.155.82.86 / 58.20.254.31 / 209.33.166.19×3）；同前端 209.33.166.19 三条间隔 12min / 4.6min，均远超 60s 闸门——密集死亡折行达标，稀疏失败各自放行（闸门语义）。tls_relay / cloudflare 新窗口 0 条。trace 行无 `(suppressed N)` 尾缀属正常（同窗无第二次失败，N=0 不加尾缀）。
 - **背景流量（真实信号未节流，符合 T3 设计）**：seley 新窗口 `_connect_ssl ... fail:OSError TimeoutError`（病态前端 connect 失败）与 x_tunnel `POST ny3.xx-net.org / response_fail:retry timeout:30`（上游波动链路）仍逐条落盘。
 - **审计判定**：G 阶段（提案 A+B）全部生效——not enough ip 四要素齐全、恢复清账闭环、HEAD 折行达标、零 ERROR、代理回归 204。F/G 两阶段日志治理至此全部收尾。
+
+# H 阶段：建连失败聚合、DNS 退避与 total 语义修正（2026-10-29，无部署）
+## 问题澄清与范围
+- **`total 0` 的旧口径**：G 阶段的 `total_suppressed_no_ip_warn` 只累计被抑制事件，首条放行不计，因此单次旱态事件后恢复会显示 `total 0`。这符合旧实现定义，但 `total` 名称容易让人理解为总事件数。用户确认 H 阶段改为**本轮总事件数（放行+抑制）**，首次事件即为 1；G 章历史语义保留不改写。
+- **`LogThrottle` 的用途**：它是带锁的通用 60 秒节流工具，每个 key 的首个事件放行，窗口内后续事件只计数，下一窗口放行时返回上一窗 suppressed 数。H 前生产调用方为 `http_dispatcher.py` 的 `retry_task_cb`（按 URL）与 `http1.py` 的 HEAD 三出口（按前端 IP）；`not enough ip` 与 `pipe_socks` 各有独立账本，不使用该类。
+- 本轮只实施三项：total 语义修正、`_connect_ssl` 按前端聚合、DNS 路由不可达退避。不做 x_tunnel episode、微旱态降级、`LogThrottle` 容量改造；不 rsync、不重启、不部署。
+## 实施改动
+1. **total 改为总事件数（`connect_manager.py`）**：字段改名 `total_no_ip_events`，每次进入 no-IP 分支都在 `no_ip_lock` 内、放行判断前递增。恢复行格式不变，但 N 现在包含全部放行与抑制事件，恢复后清零。D 组 100/101/160/161 四次旱态事件在 162 恢复时输出 `not enough ip recovered (suppressed 1, total 4)`；`no_ip_time`、60 秒闸门、尾窗 suppressed、`sleep(1)` 和连接数据路径未改。
+2. **`_connect_ssl` 按前端与异常类别聚合（同文件）**：引入实例级 `connect_ssl_log_throttle = LogThrottle(60)`，key 为 `(ip_str, type(e).__name__)`，避免不同 front 共享配额。首条保留完整原始 WARN，窗口内仅计数，下一放行仅在 N>0 时附 `(suppressed N)`。无论是否放行，`queue.put(e)` 均执行；建连、异常回传、评分、重试及 `report_connect_fail()` 路径未改。
+3. **DNS per-nameserver 60 秒退避（`dns_query.py`）**：`LocalDnsQuery` 新增带锁的 `ns_backoff` 账本。仅 `OSError` 的 `EHOSTUNREACH`/`ENETUNREACH` 写入 next-retry 时间；`query()` 跳过冷却 server，全部冷却时只选最早到期的一台做 fail-open 探测。冷却期在途重复失败仅 DEBUG 且不延长原截止时间，发送成功清账，到期后允许重试；其他 errno 保持原 WARN 且不退避。waiter/Queue、UDP receiver、查询超时和其他 DNS 路径未改。
+## TDD 与验证
+- **RED**：旧实现上 `test_xlog_roll_f.py` 有 8 项目标失败（D1/D3/E2-E7），修正测试夹具后无无关属性异常；`tests/test_dns_ns_backoff.py` 有 6 项目标失败，N3「其他 errno 不退避」作为旧行为保护通过。
+- **GREEN**：`test_xlog_roll_f.py` **30/30 PASS**（滚动 7 + LogThrottle 6 + HEAD 6 + no-IP 4 + `_connect_ssl` 7）；`tests/test_dns_ns_backoff.py` **7/7 PASS**（首错 WARN+冷却、重复不延长、其他 errno、冷却跳过、全冷却单点 fail-open、到期重试、成功清账）。
+- `python3 -m py_compile`：`connect_manager.py`、`dns_query.py` 均通过。
+- 既有回归：`test_dns_dot.py`、`test_try_add_remove_races.py`、`test_ipv6_filter.py`、`test_blockio_ratelimit.py`、`test_dns_nameserver_filter.py` 均 **ALL PASSED**；`probe_wrap_socket_fd.py` 结论保持 **A(detached)**；`git diff --check` 通过。
+- 新测试按相对路径加载 Coding 快照；既有根目录测试仍加载 `/Applications/XX-Net` 当前安装，未部署时用于证明实装既有行为无回归。DNS 测试加载时出现的 `dnslib/lex.py` 转义 `SyntaxWarning` 为既有依赖代码，本轮未改。
+## 生效边界
+H 阶段仅落盘仓库快照，未 rsync、未重启、未部署，当前运行进程不受影响。`_connect_ssl` 沿用 `LogThrottle` 的下一放行结算边界，不增加成功清账或后台尾账；DNS 的「发送成功」只表示本地 `sendto` 成功，不扩展为 nameserver 健康判定。

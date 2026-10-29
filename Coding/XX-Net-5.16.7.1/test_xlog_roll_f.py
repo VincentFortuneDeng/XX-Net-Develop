@@ -298,17 +298,18 @@ cm.no_ip_lock = threading.Lock()
 cm.no_ip_time = 0
 cm.last_no_ip_warn = 0
 cm.suppressed_no_ip_warn = 0
-cm.total_suppressed_no_ip_warn = 0
+cm.total_no_ip_events = 0
 cm.new_conn_pool = connect_manager_mod.ConnectPool()
 recovered_sock = HeadSocket("192.0.2.4", "status")
 recovered_sock.handshake_time = 1
 cm._create_ssl_connection = lambda host_info: recovered_sock
 
 cm._connect_process()
-check("D1 first drought line carries zero previous-window count",
+check("D1 first drought line and total event count",
       cm_log.warnings == [
-          "not enough ip (suppressed 0 last window, suppressing for 60s after this line)"],
-      "warnings=%r" % cm_log.warnings)
+          "not enough ip (suppressed 0 last window, suppressing for 60s after this line)"]
+      and cm.total_no_ip_events == 1,
+      "warnings=%r total=%r" % (cm_log.warnings, cm.total_no_ip_events))
 fake_time.now = 101.0
 cm._connect_process()
 fake_time.now = 160.0
@@ -323,15 +324,76 @@ cm.ip_manager.get_ip_sni_host = lambda: {"ip_str": "192.0.2.4", "sni": "s", "hos
 fake_time.now = 162.0
 check("D3 recovery returns connection and logs tail plus total",
       cm._connect_process() is recovered_sock
-      and cm_log.warnings[-1] == "not enough ip recovered (suppressed 1, total 2)",
+      and cm_log.warnings[-1] == "not enough ip recovered (suppressed 1, total 4)",
       "warnings=%r" % cm_log.warnings)
 cm._connect_process()
 check("D4 recovery is once and ledger cleared",
       len(cm_log.warnings) == 3 and cm.last_no_ip_warn == 0
-      and cm.suppressed_no_ip_warn == 0 and cm.total_suppressed_no_ip_warn == 0,
+      and cm.suppressed_no_ip_warn == 0 and cm.total_no_ip_events == 0,
       "warnings=%r last=%r suppressed=%r total=%r" %
       (cm_log.warnings, cm.last_no_ip_warn, cm.suppressed_no_ip_warn,
-       cm.total_suppressed_no_ip_warn))
+       cm.total_no_ip_events))
+
+# --- E: H-phase _connect_ssl failure aggregation by front and error type ---
+from queue import Queue
+
+def make_connect_ssl_manager(logger, error_type=RuntimeError):
+    manager = connect_manager_mod.ConnectManager.__new__(connect_manager_mod.ConnectManager)
+    manager.logger = logger
+    manager.config = types.SimpleNamespace(show_state_debug=False)
+    def fail_connect(*args, **kwargs):
+        raise error_type("connect boom")
+    manager.connect_creator = types.SimpleNamespace(connect_ssl=fail_connect)
+    manager.connect_ssl_log_throttle = LogThrottle(60)
+    return manager
+
+def connect_ssl_once(manager, ip_str, result_queue):
+    manager._connect_ssl(ip_str, "sni", "host", None, result_queue)
+
+connect_log = CaptureLogger()
+connect_manager = make_connect_ssl_manager(connect_log)
+connect_queue = Queue()
+connect_ssl_once(connect_manager, "192.0.2.10", connect_queue)
+check("E1 first connect failure allowed and exception delivered",
+      len(connect_log.warnings) == 1 and connect_queue.qsize() == 1,
+      "warnings=%r queue=%d" % (connect_log.warnings, connect_queue.qsize()))
+connect_ssl_once(connect_manager, "192.0.2.10", connect_queue)
+check("E2 same front failure suppressed but queue unchanged",
+      len(connect_log.warnings) == 1 and connect_queue.qsize() == 2,
+      "warnings=%r queue=%d" % (connect_log.warnings, connect_queue.qsize()))
+connect_ssl_once(connect_manager, "192.0.2.11", connect_queue)
+check("E3 different front independent", len(connect_log.warnings) == 2,
+      "warnings=%r" % connect_log.warnings)
+value_error_manager = make_connect_ssl_manager(connect_log, ValueError)
+value_error_manager.connect_ssl_log_throttle = connect_manager.connect_ssl_log_throttle
+connect_ssl_once(value_error_manager, "192.0.2.10", connect_queue)
+check("E4 different exception class independent", len(connect_log.warnings) == 3,
+      "warnings=%r" % connect_log.warnings)
+connect_manager.connect_ssl_log_throttle.interval = 0.01
+_time.sleep(0.02)
+connect_ssl_once(connect_manager, "192.0.2.10", connect_queue)
+check("E5 expired front logs previous suppressed count",
+      len(connect_log.warnings) == 4
+      and connect_log.warnings[-1].endswith("(suppressed 1)"),
+      "warnings=%r" % connect_log.warnings)
+
+concurrent_connect_log = CaptureLogger()
+concurrent_manager = make_connect_ssl_manager(concurrent_connect_log)
+concurrent_queue = Queue()
+threads = [threading.Thread(target=connect_ssl_once,
+                            args=(concurrent_manager, "192.0.2.12", concurrent_queue))
+           for _ in range(20)]
+[t.start() for t in threads]
+[t.join() for t in threads]
+check("E6 concurrent same front one warn and all exceptions delivered",
+      len(concurrent_connect_log.warnings) == 1 and concurrent_queue.qsize() == 20,
+      "warnings=%r queue=%d" % (concurrent_connect_log.warnings, concurrent_queue.qsize()))
+concurrent_manager.connect_ssl_log_throttle.interval = 0.01
+_time.sleep(0.02)
+connect_ssl_once(concurrent_manager, "192.0.2.12", concurrent_queue)
+check("E7 concurrent suppressed count settled",
+      concurrent_connect_log.warnings[-1].endswith("(suppressed 19)"),
+      "warnings=%r" % concurrent_connect_log.warnings)
 
 print()
 if failures:
