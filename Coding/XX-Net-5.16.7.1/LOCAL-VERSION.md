@@ -30,10 +30,12 @@
 | `code/default/lib/noarch/front_base/http1.py` | F+G 阶段：`head_request` 三出口（send len / status / exception）失败 WARN+trace 统一改为类级 `LogThrottle(60)`、按前端 `ssl_sock.ip_str` 跨 worker 聚合；删除 per-worker 节流属性，放行 trace 附 `(suppressed N)`。探测/recheck/close/返回值逻辑零改动 |
 | `code/default/x_tunnel/local/proxy_session.py` | I 阶段：实例级 `transfer_log_throttle = LogThrottle(60)` 在后台线程前创建；ack timeout、retry、非 200 roundtrip、最终 failed 按事件所属 `(session_id, transfer_no, kind)` 聚合，roundtrip 使用请求前捕获的 session，避免 reset 后旧响应错账；放行保留原字段并结算 suppressed。状态迁移、重试、notify、sleep 与传输路径零改动 |
 | `code/default/x_tunnel/local/front_dispatcher.py` | I 阶段：模块级 `LogThrottle(60)` 按完整 `(host, path)` 聚合 front retry；同 tid 抑制、不同 tid 独立，front 选择、状态码、重试和请求内容零改动 |
+| `code/default/x_tunnel/local/base_container.py` | J 阶段：`BlockReceivePool` 实例级 `LogThrottle(60)` 按 SN 聚合 `mark_sn_timeout` 首报/renew；仅实际日志事件进入账本，静默旧事件不计数；reset 在原接收池锁内同时清空状态并重建账本，同号 SN 重新首报。被抑制 renew 仍按原条件更新 `server_send_time`，`get_timeout_list`、重试与传输零改动 |
 | `test_xlog_roll_f.py` | F+G+H+I 阶段离线测试（仓库快照内）：warning_log 滚动 7 项 + LogThrottle 语义 8 项（活跃 key 可超过 512、仅剪枝过期 key、并发精确计数）+ HEAD 6 项 + no-IP 4 项 + `_connect_ssl` 8 项（含真实 `__init__` 实例隔离、20 线程与 Queue 全送达）= 33/33 PASS |
 | `../../tests/test_dns_ns_backoff.py` | H+I 阶段 DNS 离线测试：EHOSTUNREACH/ENETUNREACH 首错 WARN+60s 冷却、冷却重复仅新增 DEBUG 且不延长、其他 errno 不退避、query 跳过冷却 server、全冷却最早到期单点 fail-open、到期重试、成功清账 = 9/9 PASS；按相对路径加载本快照，不创建真实 socket/线程 |
 | `../../tests/test_retry_log_throttle.py` | I 阶段 dispatcher 离线测试：同 front/endpoint 忽略 tid，不同 front/host/endpoint 独立，retry 与 timeout/status 共窗，worker=None 安全，下一窗 suppressed、完整 URL 保留、20 线程并发单 WARN，非 UTF-8 path 重试/响应不变 = 9/9 PASS |
 | `../../tests/test_xtunnel_log_throttle.py` | I 阶段 x_tunnel 离线测试：session/transfer/kind 隔离、下一窗 suppressed、20 线程单放行、状态迁移/retry/notify/响应不变，front retry 同 tid 聚合，以及 reset 后旧响应不与新 session 错账 = 8/8 PASS |
+| `../../tests/test_mark_sn_timeout_throttle.py` | J 阶段接收池离线测试：同 SN 聚合且状态更新、不同 SN/池实例独立、跨窗 suppressed、reset 后同号 SN 首报、20 线程单 WARN 且保存最大 t、静默旧事件不消耗窗口、reset/mark 可控交错保证新生命周期首报 = 8/8 PASS |
 
 ## 修复阶段索引（详见 docs/XX-Net-macOS-ARM64-修复记录.md）
 
@@ -46,6 +48,7 @@
 - **G 阶段（节流尾账完善，2026-10-28 午后，无部署）**：提案 A+B 落盘——not enough ip 放行行补上一窗计数、恢复时结算尾窗与本轮累计；HEAD 三出口改为按前端 `ip_str` 跨 worker 聚合；`test_xlog_roll_f.py` 扩至 23/23，五套既有回归与 fd 探针结论不变；未实施 C，未 rsync、未重启
 - **H 阶段（建连与 DNS 治理，2026-10-29，已部署并重启）**：total 改为本轮旱态总事件数（首次为 1）；`_connect_ssl` 按 `(ip_str, 异常类别)` 60s 聚合并保持 Queue 全送达；DNS 对 EHOSTUNREACH/ENETUNREACH 做 per-nameserver 60s 退避与全冷却单点 fail-open。快照测试 30/30 + 7/7 PASS，五套既有回归全 PASS、fd 探针 A(detached)。已部署至 `/Applications/XX-Net`，用户重启后 PID 2066（19:00:28）加载；`_connect_ssl` suppressed 与 total=1 新口径已获生产日志实证，DNS 延长观察约 82 分钟未触发目标 errno，不声称现场疗效
 - **I 阶段（前端与 x_tunnel 故障链日志聚合，2026-10-29，未部署）**：dispatcher 改按 `(method, host, 去查询参数 endpoint bytes, front ip)` 聚合 retry/timeout/status；x_tunnel 按事件所属 `(session_id, transfer_no, kind)` 聚合四类 WARN，front retry 按完整 `(host, path)` 聚合；补强 LogThrottle、DNS 与真实初始化实例隔离测试。独立审查两项 Important（非 UTF-8 path、reset 后旧响应错账）已 RED→GREEN 修复；新测试 9/9 + 8/8，综合测试 33/33 + 9/9，五套既有回归与 fd 探针通过；只改日志，未改重试、状态、Queue、评分或传输路径，未 rsync、未重启、未 push
+- **J 阶段（下载 SN 超时日志聚合，2026-10-29，未部署）**：复评 H 日志发现 `mark_sn_timeout` 首报 363、renew 379；按 SN 60s 聚合首报/renew，reset 在原锁内同步重建账本，状态更新条件不变。独立审查两项 Important（静默旧事件误计窗口、reset/mark 非原子）已 RED→GREEN 修复；新测试 8/8，全部新旧回归与 fd 探针通过；`req get response timeout` 留待 I 部署后复评，未 rsync、未重启、未 push
 
 ## 已知评估后接受项
 

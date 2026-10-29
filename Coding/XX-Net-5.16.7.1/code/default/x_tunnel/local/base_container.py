@@ -10,7 +10,7 @@ import selectors2 as selectors
 
 import utils
 
-from xlog import getLogger
+from xlog import getLogger, LogThrottle
 xlog = getLogger("x_tunnel")
 
 
@@ -292,9 +292,11 @@ class BlockReceivePool():
 
     def reset(self):
         # xlog.info("recv_pool reset")
-        self.next_sn = 1
-        self.block_list = []
-        self.timeout_sn_list = {}
+        with self.lock:
+            self.next_sn = 1
+            self.block_list = []
+            self.timeout_sn_list = {}
+            self.timeout_log_throttle = LogThrottle(60)
 
     def put(self, sn, data):
         # xlog.debug("recv_pool put sn:%d len:%d", sn, len(data))
@@ -334,12 +336,18 @@ class BlockReceivePool():
         # xlog.warn("mark_sn_timeout down_sn:%d", sn)
         with self.lock:
             if sn not in self.timeout_sn_list:
-                self.logger.warn("mark_sn_timeout sn:%d t:%f", sn, server_time - t)
+                allowed, suppressed = self.timeout_log_throttle.allow(sn)
+                if allowed:
+                    suffix = " (suppressed %d)" % suppressed if suppressed else ""
+                    self.logger.warn("mark_sn_timeout sn:%d t:%f%s", sn, server_time - t, suffix)
                 self.timeout_sn_list[sn] = {
                     "server_send_time": t,
                 }
             elif t > self.timeout_sn_list[sn]["server_send_time"]:
-                self.logger.warn("mark_sn_timeout renew sn:%d t:%f", sn, server_time - t)
+                allowed, suppressed = self.timeout_log_throttle.allow(sn)
+                if allowed:
+                    suffix = " (suppressed %d)" % suppressed if suppressed else ""
+                    self.logger.warn("mark_sn_timeout renew sn:%d t:%f%s", sn, server_time - t, suffix)
                 self.timeout_sn_list[sn]["server_send_time"] = t
 
     def get_timeout_list(self, server_time, timeout):
