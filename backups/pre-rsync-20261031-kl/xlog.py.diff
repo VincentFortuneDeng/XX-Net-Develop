@@ -1,0 +1,11 @@
+--- /Applications/XX-Net/code/default/lib/noarch/xlog.py	2026-10-27 21:16:58
++++ /Users/solvan/Downloads/XX-Net-Develop/Coding/XX-Net-5.16.7.1/code/default/lib/noarch/xlog.py	2026-10-31 18:47:22
+@@ -455,7 +455,7 @@
+ 
+ 
+ def warning(fmt, *args, **kwargs):
+-    default_log.warnin(fmt, *args, **kwargs)
++    default_log.warn(fmt, *args, **kwargs)
+ 
+ 
+ def warn(fmt, *args, **kwargs):

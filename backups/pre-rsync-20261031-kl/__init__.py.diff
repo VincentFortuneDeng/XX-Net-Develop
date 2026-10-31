@@ -1,0 +1,57 @@
+--- /Applications/XX-Net/code/default/smart_router/local/__init__.py	2026-09-28 16:42:14
++++ /Users/solvan/Downloads/XX-Net-Develop/Coding/XX-Net-5.16.7.1/code/default/smart_router/local/__init__.py	2026-10-31 18:37:52
+@@ -135,22 +135,19 @@
+ 
+     allow_remote = args.get("allow_remote", 0)
+ 
+-    listen_ips = g.config.proxy_bind_ip
+-    if isinstance(listen_ips, str):
+-        listen_ips = [listen_ips]
++    proxy_listen_ips = g.config.proxy_bind_ip
++    if isinstance(proxy_listen_ips, str):
++        proxy_listen_ips = [proxy_listen_ips]
+     else:
+-        listen_ips = list(listen_ips)
++        proxy_listen_ips = list(proxy_listen_ips)
+ 
+-    if allow_remote and ("0.0.0.0" not in listen_ips or "::" not in listen_ips):
+-        listen_ips = [("0.0.0.0")]
+-    addresses = [(listen_ip, g.config.proxy_port) for listen_ip in listen_ips]
++    if allow_remote and ("0.0.0.0" not in proxy_listen_ips or "::" not in proxy_listen_ips):
++        proxy_listen_ips = [("0.0.0.0")]
++    addresses = [(listen_ip, g.config.proxy_port) for listen_ip in proxy_listen_ips]
+ 
+-    g.proxy_server = simple_http_server.HTTPServer(addresses,
+-                                                   proxy_handler.ProxyServer,
+-                                                   logger=xlog,
+-                                                   check_listen_interval=60)
+-    g.proxy_server.start()
+-    xlog.info("Proxy server listen:%s:%d.", listen_ips, g.config.proxy_port)
++    # 代理线程一旦 start 即可接收请求，DNS 查询与 UDP 中继必须先于端口就绪。
++    g.local_ips = dns_query.get_local_ips()
++    g.dns_query = dns_query.CombineDnsQuery()
+ 
+     listen_ips = g.config.dns_bind_ip
+     if isinstance(listen_ips, str):
+@@ -160,14 +157,18 @@
+     if allow_remote and ("0.0.0.0" not in listen_ips or "::" not in listen_ips):
+         listen_ips.append("0.0.0.0")
+ 
+-    g.local_ips = dns_query.get_local_ips()
+-    g.dns_query = dns_query.CombineDnsQuery()
+-
+     g.dns_srv = dns_server.DnsServer(
+         bind_ip=listen_ips, port=g.config.dns_port,
+         backup_port=g.config.dns_backup_port,
+         ttl=g.config.dns_ttl)
+     g.dns_srv.start()
++
++    g.proxy_server = simple_http_server.HTTPServer(addresses,
++                                                   proxy_handler.ProxyServer,
++                                                   logger=xlog,
++                                                   check_listen_interval=60)
++    g.proxy_server.start()
++    xlog.info("Proxy server listen:%s:%d.", proxy_listen_ips, g.config.proxy_port)
+     xlog.debug("DNS server port %d", g.dns_srv.listen_port)
+ 
+     ready = True

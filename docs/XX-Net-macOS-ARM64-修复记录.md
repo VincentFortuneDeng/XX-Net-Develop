@@ -738,7 +738,7 @@ I 阶段代码于 2026-10-29 完成，2026-10-31 已与 J 一并部署到 `/Appl
 - smart_router 在 `18:16:13.364` 出现一条 `NoneType.query_recursively` ERROR。堆栈与源码确认是既有启动顺序竞态：`local/__init__.py` 在 152 行先启动 proxy_server，164 行才给 `g.dns_query` 赋值，启动瞬间请求可落入中间窗口。I/J 未修改 smart_router 或该初始化路径，本条与本次四文件无关；后续可单独按 RED→GREEN 修复初始化顺序或增加未就绪保护。
 - 后续 `18:19:51–18:21:14` 出现首批 I 目标首报：transfer 102/114 的 roundtrip status、final failed、retry、ack timeout 按不同 kind/transfer 各自放行，front retry tid=114 首报保留；seley 的 status 与 retry 样例相隔约 81 秒。窗口内没有同 key 重复事件，因此没有 suppressed 属预期，尚不能据此测量收敛比例。J 的 `mark_sn_timeout` 仍未触发；除启动竞态外未出现新增 ERROR。
 
-# K 阶段：Smart Router DNS 初始化启动竞态（2026-10-31，未部署）
+# K 阶段：Smart Router DNS 初始化启动竞态（2026-10-31，已部署待重启）
 ## 根因与最小修复
 - 生产堆栈为 proxy_handler → smart_route `g.dns_query.query_recursively()`，在重启首秒得到 None。真实 `start()` 的顺序是先 `proxy_server.start()`，再执行 `get_local_ips()` 与 `CombineDnsQuery()`，代理线程可在 DNS 对象赋值前受理请求。
 - 独立审查补充发现同类 Important：SOCKS5 UDP ASSOCIATE 会在代理启动后、DNS 服务启动前读取 `g.dns_srv.udp_relay_port`。因此将 DNS 地址计算、`g.dns_srv` 构造与 `start()` 也前移到代理 `start()` 之前，并把代理监听地址改用独立变量，避免与 DNS 地址日志混用。
@@ -749,9 +749,10 @@ I 阶段代码于 2026-10-29 完成，2026-10-31 已与 J 一并部署到 `/Appl
 - 独立审查无 Critical；唯一 Important 的 UDP ASSOCIATE 窗口已按 S2 RED→GREEN 修复，未做第二轮审查。两项 Minor 延后：代理绑定失败时，提前创建的 DNS 资源需要进程退出回收（原启动失败语义亦未提供完整清理）；测试的进程内 `sys.modules` 替身在与其他 pytest 用例同进程运行时应恢复（当前脚本独立执行）。
 - 最终完整回归：S1/S2、J 8/8、I dispatcher 9/9、I x_tunnel 8/8、综合节流 33/33、DNS 9/9，五套既有回归及 fd 探针全部通过，`git diff --check` 通过。
 ## 生效边界
-- K 仅落盘仓库快照，未部署、未重启、未 push；当前运行进程仍是原初始化顺序。部署后仍需用户重启，并观察启动首秒不再出现 `NoneType.query_recursively`，同时确认 8086、DNS 与代理 204 正常。
+- K/L 已于 2026-10-31 一并部署到 `/Applications/XX-Net`，当前待用户重启，未 push。三个文件覆盖前均有 `.orig`/`.diff`，位于 `backups/pre-rsync-20261031-kl/`；rsync 后 cmp 与 SHA-256 一致。
+- K 的生产验证目标：启动首秒不再出现 `NoneType.query_recursively` 或 `NoneType.udp_relay_port`，并确认 8086、DNS 与代理 204 正常。L 的验证目标：后续 host=None 请求不再出现 bytes 格式化 TypeError，顶层 warning 委托由 B9 保证；无目标事件只记未触发。
 
-# L 阶段：剩余推荐错误修复与尾账方案取舍（2026-10-31，未部署）
+# L 阶段：剩余推荐错误修复与尾账方案取舍（2026-10-31，已部署待重启）
 ## 证据与范围
 - `host=None` 的生产堆栈来自 cloudflare dispatcher：默认诊断 URL 在 `b"%s %s%s" % (method, host, path)` 处对 None 做 bytes 格式化，导致 request 进入异常出口。修复只在未显式传 url 时用 `b"<unknown>"` 作为展示占位；原始 task.host、last_host、重试、响应、fail/notify 与 I 的聚合 key 不变。
 - `xlog.warning()` 官方笔误调用了不存在的 `default_log.warnin`；改为与 `warn()` 一致委托 `default_log.warn`，完整传递 fmt/args/kwargs。
@@ -763,4 +764,4 @@ I 阶段代码于 2026-10-29 完成，2026-10-31 已与 J 一并部署到 `/Appl
 - 独立审查无 Critical、无 Important；唯一 Minor 为 R10 未直接覆盖 host=None 的响应/重试路径和 Task.host/notify 断言。当前局部 url_host 实现未改变这些语义，按规则记录延后，不做第二轮审查或扩张修复。
 - 最终完整回归：K S1/S2、J 8/8、dispatcher 10/10、I x_tunnel 8/8、xlog 34/34、DNS 9/9，五套既有回归及 fd 探针全部通过，目标文件 py_compile 与 `git diff --check` 通过。
 ## 生效边界
-- L 与 K 当前均未部署、未重启；生产疗效需部署并由用户重启后核对。
+- K/L 均已部署，但当前进程未重启、尚未加载；部署文件 cmp/SHA-256 已校验，备份与生产验证目标见上节。

@@ -1,0 +1,12 @@
+--- /Applications/XX-Net/code/default/lib/noarch/front_base/http_dispatcher.py	2026-10-29 21:12:21
++++ /Users/solvan/Downloads/XX-Net-Develop/Coding/XX-Net-5.16.7.1/code/default/lib/noarch/front_base/http_dispatcher.py	2026-10-31 18:47:20
+@@ -362,7 +362,8 @@
+ 
+         try:
+             if not url:
+-                url = b"%s %s%s" % (method, host, path)
++                url_host = host if host is not None else b"<unknown>"
++                url = b"%s %s%s" % (method, url_host, path)
+ 
+             self._debug_log("task start request %s" % url)
+ 
