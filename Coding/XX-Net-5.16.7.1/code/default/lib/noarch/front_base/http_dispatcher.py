@@ -362,7 +362,8 @@ class HttpsDispatcher(object):
 
         try:
             if not url:
-                url = b"%s %s%s" % (method, host, path)
+                url_host = host if host is not None else b"<unknown>"
+                url = b"%s %s%s" % (method, url_host, path)
 
             self._debug_log("task start request %s" % url)
 

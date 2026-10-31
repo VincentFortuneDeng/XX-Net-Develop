@@ -455,7 +455,7 @@ def info(fmt, *args, **kwargs):
 
 
 def warning(fmt, *args, **kwargs):
-    default_log.warnin(fmt, *args, **kwargs)
+    default_log.warn(fmt, *args, **kwargs)
 
 
 def warn(fmt, *args, **kwargs):

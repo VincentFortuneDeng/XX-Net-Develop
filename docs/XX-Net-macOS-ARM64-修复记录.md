@@ -750,3 +750,17 @@ I 阶段代码于 2026-10-29 完成，2026-10-31 已与 J 一并部署到 `/Appl
 - 最终完整回归：S1/S2、J 8/8、I dispatcher 9/9、I x_tunnel 8/8、综合节流 33/33、DNS 9/9，五套既有回归及 fd 探针全部通过，`git diff --check` 通过。
 ## 生效边界
 - K 仅落盘仓库快照，未部署、未重启、未 push；当前运行进程仍是原初始化顺序。部署后仍需用户重启，并观察启动首秒不再出现 `NoneType.query_recursively`，同时确认 8086、DNS 与代理 204 正常。
+
+# L 阶段：剩余推荐错误修复与尾账方案取舍（2026-10-31，未部署）
+## 证据与范围
+- `host=None` 的生产堆栈来自 cloudflare dispatcher：默认诊断 URL 在 `b"%s %s%s" % (method, host, path)` 处对 None 做 bytes 格式化，导致 request 进入异常出口。修复只在未显式传 url 时用 `b"<unknown>"` 作为展示占位；原始 task.host、last_host、重试、响应、fail/notify 与 I 的聚合 key 不变。
+- `xlog.warning()` 官方笔误调用了不存在的 `default_log.warnin`；改为与 `warn()` 一致委托 `default_log.warn`，完整传递 fmt/args/kwargs。
+- `req get response timeout` 在四份 x_tunnel 当前 warning 日志中总量及 I/J 重启后均为 0，未达到此前“仍高频再聚合”的条件，本轮不修改四个 front.py。
+- 尾账选择：有明确 close/reset/recovered 终点时优先生命周期 flush，只结算一次、无后台定时器，资源与退出语义更优；长期模块级、无终点账本才考虑脉冲，但需要额外线程/定时器、锁与退出协调。本轮不实施全局脉冲或扩张 flush 框架。
+## TDD 与验证
+- R10 在旧实现稳定复现 bytes 格式化 TypeError、fail_num=0；修复后 host 仍为 None，正常走 timeout 日志与 fail/notify 路径，dispatcher 10/10 PASS。
+- B9 在旧实现复现 `WarningCapture` 无 `warnin` 的 AttributeError；修复后默认 logger.warn 收到完整参数，xlog 34/34 PASS。
+- 独立审查无 Critical、无 Important；唯一 Minor 为 R10 未直接覆盖 host=None 的响应/重试路径和 Task.host/notify 断言。当前局部 url_host 实现未改变这些语义，按规则记录延后，不做第二轮审查或扩张修复。
+- 最终完整回归：K S1/S2、J 8/8、dispatcher 10/10、I x_tunnel 8/8、xlog 34/34、DNS 9/9，五套既有回归及 fd 探针全部通过，目标文件 py_compile 与 `git diff --check` 通过。
+## 生效边界
+- L 与 K 当前均未部署、未重启；生产疗效需部署并由用户重启后核对。

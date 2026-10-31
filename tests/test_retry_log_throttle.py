@@ -237,6 +237,19 @@ check("R9 non utf8 path preserves retry and response behavior",
       (raw_retry_error, raw_task.retry_count, raw_response,
        status_disp.fail_num, status_disp.trigger_create_worker_cv.count))
 
+# host 缺失只影响诊断 URL 的展示，不得让 request 落入异常出口。
+none_log = CaptureLogger()
+none_disp = make_dispatcher(none_log)
+none_result = none_disp.request("POST", None, "/data?tid=92", {}, b"", timeout=0)
+check("R10 none host keeps request failure semantics without log exception",
+      none_result is None and none_disp.last_host is None
+      and none_disp.fail_num == 1 and none_disp.task_count == 0
+      and len(none_log.warnings) == 1
+      and "timeout" in none_log.warnings[0]
+      and "http_dispatcher:request" not in none_log.warnings[0],
+      "warnings=%r host=%r fail=%d count=%d" %
+      (none_log.warnings, none_disp.last_host, none_disp.fail_num, none_disp.task_count))
+
 print()
 if failures:
     print("RESULT: %d FAILURES: %s" % (len(failures), failures))

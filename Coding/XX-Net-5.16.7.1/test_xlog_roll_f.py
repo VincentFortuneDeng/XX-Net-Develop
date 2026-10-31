@@ -177,6 +177,26 @@ check("B8 concurrent ledger keeps every key and count",
       "len=%d bad_counts=%d" %
       (len(lt4.hits), sum(entry[1] != 7 for entry in lt4.hits.values())))
 
+# 顶层 warning() 必须与 warn() 一样进入默认 logger 的 warn 方法。
+warning_calls = []
+class WarningCapture(object):
+    def warn(self, fmt, *args, **kwargs):
+        warning_calls.append((fmt, args, kwargs))
+
+original_default_log = xlog_mod.default_log
+xlog_mod.default_log = WarningCapture()
+warning_error = None
+try:
+    xlog_mod.warning("warning %s", "works", extra=1)
+except Exception as e:
+    warning_error = e
+finally:
+    xlog_mod.default_log = original_default_log
+check("B9 top level warning delegates to warn",
+      warning_error is None
+      and warning_calls == [("warning %s", ("works",), {"extra": 1})],
+      "error=%r calls=%r" % (warning_error, warning_calls))
+
 # --- C: G-phase HEAD probe throttling, aggregated by front ip_str ---
 # Load the real worker/connect-manager modules with only their external
 # dependencies stubbed. No running process is imported or touched.
