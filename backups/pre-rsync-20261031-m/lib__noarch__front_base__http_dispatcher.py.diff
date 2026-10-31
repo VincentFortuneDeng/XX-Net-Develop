@@ -1,0 +1,12 @@
+--- /Applications/XX-Net/code/default/lib/noarch/front_base/http_dispatcher.py	2026-10-31 18:47:20
++++ /Users/solvan/Downloads/XX-Net-Develop/Coding/XX-Net-5.16.7.1/code/default/lib/noarch/front_base/http_dispatcher.py	2026-10-31 19:06:38
+@@ -121,6 +121,9 @@
+         self.running = False
+         self.request_queue.put(None)
+         self.close_all_worker("stop")
++        suppressed, key_count = self.retry_log_throttle.flush()
++        if suppressed:
++            self.logger.warn("dispatcher final suppressed:%d keys:%d", suppressed, key_count)
+ 
+     def _debug_log(self, fmt, *args, **kwargs):
+         if not self.config.show_state_debug:

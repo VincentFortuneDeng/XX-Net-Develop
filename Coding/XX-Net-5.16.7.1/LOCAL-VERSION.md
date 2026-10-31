@@ -53,7 +53,7 @@
 - **J 阶段（下载 SN 超时日志聚合，2026-10-29 实施，2026-10-31 已部署并重启）**：复评 H 日志发现 `mark_sn_timeout` 首报 363、renew 379；按 SN 60s 聚合首报/renew，reset 在原锁内同步重建账本，状态更新条件不变。独立审查两项 Important（静默旧事件误计窗口、reset/mark 非原子）已 RED→GREEN 修复；新测试 8/8，全部新旧回归与 fd 探针通过；`req get response timeout` 留待重启后复评。已于 2026-10-31 与 I 一并 rsync并由用户重启；代理 204，首批 I 独立首报符合设计、J 未触发，未 push
 - **K 阶段（Smart Router 启动竞态，2026-10-31，已部署待重启）**：生产重启首秒出现 `NoneType.query_recursively`；独立审查补充 SOCKS5 UDP ASSOCIATE 的 `NoneType.udp_relay_port` 同类窗口。将 `g.local_ips`、`g.dns_query`、`g.dns_srv` 全部前移到 `proxy_server.start()` 之前，分离代理/DNS 地址变量。S1/S2 均 RED→GREEN，完整回归通过；两项 Minor（启动失败资源清理、测试 sys.modules 隔离）延后。已与 L 一并部署，备份于 `backups/pre-rsync-20261031-kl/`，cmp/SHA-256 一致，待重启，未 push
 - **L 阶段（剩余推荐错误修复，2026-10-31，已部署待重启）**：dispatcher 默认诊断 URL 对 `host=None` 使用 `<unknown>`，不改变 task host、重试或响应；顶层 `xlog.warning()` 修正为 `default_log.warn()`。R10 与 B9 均先按目标 RED 再 GREEN，dispatcher 10/10、xlog 34/34，完整回归通过。`req get response timeout` 当前生产日志及 I/J 重启后均 0，按证据不做新增节流；尾账推荐有明确生命周期时用 flush，不引入全局后台脉冲
-- **M 阶段（生命周期尾账结算，2026-10-31，开发完成待部署）**：`LogThrottle.flush()` 原子结算、清账并封口，`reset()` 开启新生命周期；接入 dispatcher、ConnectManager、ProxySession、BlockReceivePool.reset 与 front_dispatcher.stop，每个对象最多一条汇总 WARN，不逐 key、不后台线程。独立审查三项 Important（stop 后迟到事件、外层锁内日志、清理异常跳过结算）均一轮 RED→GREEN 修复；xlog 38/38、dispatcher 12/12、x_tunnel 14/14、SN 9/9，完整回归通过；http1 类级 HEAD 账本没有安全全局终点，保持现状
+- **M 阶段（生命周期尾账结算，2026-10-31，已部署待重启）**：`LogThrottle.flush()` 原子结算、清账并封口，`reset()` 开启新生命周期；接入 dispatcher、ConnectManager、ProxySession、BlockReceivePool.reset 与 front_dispatcher.stop，每个对象最多一条汇总 WARN，不逐 key、不后台线程。独立审查三项 Important（stop 后迟到事件、外层锁内日志、清理异常跳过结算）均一轮 RED→GREEN 修复；xlog 38/38、dispatcher 12/12、x_tunnel 14/14、SN 9/9，完整回归通过；http1 类级 HEAD 账本没有安全全局终点，保持现状
 
 ## 已知评估后接受项
 

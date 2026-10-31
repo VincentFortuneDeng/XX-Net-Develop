@@ -40,7 +40,7 @@
   <div class="badges">
     <span class="badge deployed">I/J 已部署并随新进程加载</span>
     <span class="badge pending">首批首报已出现，疗效待观察</span>
-    <span class="badge pending">K/L 已部署；M 开发完成待部署</span>
+    <span class="badge pending">K/L/M 已部署，待重启</span>
     <span class="badge mechanism">独立 HTML · 无外部依赖</span>
   </div>
   <div class="summary-grid">
@@ -324,14 +324,14 @@ reset()
 </div></article>
 
 <article class="change" data-kind="logonly pending">
-<div class="change-head"><h3>M：真实 stop/reset 终点结算 LogThrottle 尾账</h3><span class="tag pending">开发完成待部署</span> <span class="tag logonly">仅日志</span></div>
+<div class="change-head"><h3>M：真实 stop/reset 终点结算 LogThrottle 尾账</h3><span class="tag pending">已部署 · 待重启</span> <span class="tag logonly">仅日志</span></div>
 <div class="change-body"><div class="path">xlog.py · http_dispatcher.py · connect_manager.py · proxy_session.py · front_dispatcher.py · base_container.py</div>
 <pre><code>stop / reset 生命周期终点
   → flush() 在账本锁内汇总并清空，随后封住旧生命周期
   → 在外层业务锁释放后输出每个对象最多一条 final 汇总 WARN
   → 迟到事件不重开账；start/init 调 reset() 开启新生命周期</code></pre>
 <dl class="fields"><dt>五个终点</dt><dd>dispatcher.stop、ConnectManager.stop、ProxySession.stop（reset 经 stop）、front_dispatcher.stop、BlockReceivePool.reset。</dd><dt>异常与外层锁</dt><dd>ProxySession.stop 用 finally 保证清理异常仍结算；接收池支持 defer_log，汇总在外层会话锁释放后写。</dd><dt>并发与构造</dt><dd>allow/flush 共用账本锁；接收池 reset 在原 self.lock 内取旧账并替换，构造器首次无旧账安全。</dd><dt>保留边界</dt><dd>http1 的 HEAD 是跨 worker 类级账本，没有安全全局终点，不在单个 worker.close 时清账；不增加后台脉冲。</dd><dt>业务边界</dt><dd>重试、Queue、状态迁移、notify、SN 更新、传输与响应路径不变；stop 后真实 retry 仍走 stopped 失败出口。</dd></dl>
-<div class="ok">初版六项及审查补充测试均先 RED 后 GREEN；独立审查三项 Important 已一轮修复。xlog 38/38、dispatcher 12/12、x_tunnel 14/14、SN 9/9，五套既有回归与 fd 探针通过。离线通过不等于生产已触发尾账。</div>
+<div class="ok">初版六项及审查补充测试均先 RED 后 GREEN；独立审查三项 Important 已一轮修复。xlog 38/38、dispatcher 12/12、x_tunnel 14/14、SN 9/9，五套既有回归与 fd 探针通过。六文件已备份部署，cmp/SHA-256 一致；当前进程尚未重启，离线通过不等于生产已触发尾账。</div>
 </div></article>
 
 <article class="change" data-kind="logonly">
@@ -377,14 +377,14 @@ reset()
 <li>H DNS 退避：延长观察约 82 分钟未出现目标 errno，只记录未触发。</li>
 <li>I：离线 R1–R9、X1–X8 通过；重启后首批不同 transfer/kind 首报符合设计，尚无同 key 同窗聚合样例。</li>
 <li>J：离线 M1–M8 通过；重启后尚未出现 mark_sn_timeout，不能评估生产疗效。</li>
-<li>M：六项生命周期测试及完整回归通过；开发完成待部署，生产尾账尚未触发验证。</li>
+<li>M：六项生命周期测试及完整回归通过；六文件已部署待重启，生产尾账尚未触发验证。</li>
 <li>10MB 滚动：生产未触达阈值，由滚动测试覆盖。</li>
 </ul>
 </div>
 </div>
 <h3>明确保留或未修，不要误认为已完成</h3>
 <ul class="checklist">
-<li><strong>K/L 已部署、待重启；M 待部署：</strong>Smart Router 启动顺序、host=None、xlog.warning 与生命周期 flush 已完成离线验证；K/L 文件已部署，M 将在审查提交后备份部署。重启后核对启动 ERROR、代理 204 与目标日志。</li>
+<li><strong>K/L/M 已部署、待重启：</strong>Smart Router 启动顺序、host=None、xlog.warning 与生命周期 flush 已完成离线验证；K/L/M 文件均已备份部署并完成 cmp/SHA-256 校验。重启后核对启动 ERROR、代理 204 与目标日志。</li>
 <li><code>req get response timeout</code>：当前四份 x_tunnel warning 日志及 I/J 重启后均为 0，未达到高频条件，本轮不做新增节流。</li>
 <li>微旱态降级、LogThrottle 后台脉冲、完整 episode 框架、全局 ERROR 限流：均未实施；M 只接真实生命周期终点，不做全局定时结算。</li>
 <li>上游 front 池质量、远端 handshake/connect timeout、check_update 网络不可达：不是本地日志补丁能够根治的项目。</li>
@@ -412,12 +412,12 @@ reset()
 <tr><td class="path">smart_router/local/pipe_socks.py</td><td>非阻塞转发</td><td>selector DEBUG；send-block WARN/suppressed/final</td><td><span class="tag deployed">已部署</span></td></tr>
 <tr><td class="path">x_tunnel/local/tls_relay_front/ip_manager.py</td><td>front 池</td><td>IPv6 过滤与 skipped INFO</td><td><span class="tag deployed">已部署</span></td></tr>
 <tr><td class="path">lib/noarch/xlog.py</td><td>公共日志设施</td><td>warning_log 滚动、LogThrottle；L 修正 warning 委托；M flush</td><td><span class="tag pending">L/M 待生效</span></td></tr>
-<tr><td class="path">lib/noarch/front_base/connect_manager.py</td><td>建连与 front 资源</td><td>no-IP WARN/recovered；_connect_ssl WARN/suppressed；M stop 尾账</td><td><span class="tag pending">M 待部署</span></td></tr>
+<tr><td class="path">lib/noarch/front_base/connect_manager.py</td><td>建连与 front 资源</td><td>no-IP WARN/recovered；_connect_ssl WARN/suppressed；M stop 尾账</td><td><span class="tag pending">M 待重启</span></td></tr>
 <tr><td class="path">lib/noarch/front_base/http1.py</td><td>HTTP/1 worker</td><td>HEAD 三出口 WARN+trace，按 front IP 聚合；无全局 flush</td><td><span class="tag deployed">已部署至 G</span></td></tr>
 <tr><td class="path">lib/noarch/front_base/http_dispatcher.py</td><td>任务调度</td><td>retry/timeout/status 聚合；L host=None 防御；M stop 尾账</td><td><span class="tag pending">I 待疗效 / L/M 待生效</span></td></tr>
-<tr><td class="path">x_tunnel/local/proxy_session.py</td><td>会话与 transfer</td><td>ack/retry/roundtrip/failed 聚合；M stop 尾账</td><td><span class="tag pending">I 待疗效 / M 待部署</span></td></tr>
-<tr><td class="path">x_tunnel/local/front_dispatcher.py</td><td>x_tunnel front 调用</td><td>front retry 按 host+path 聚合；M stop 尾账</td><td><span class="tag pending">I 待疗效 / M 待部署</span></td></tr>
-<tr><td class="path">x_tunnel/local/base_container.py</td><td>下载接收池</td><td>mark_sn_timeout 按 SN 聚合；M reset 尾账</td><td><span class="tag pending">J 待疗效 / M 待部署</span></td></tr>
+<tr><td class="path">x_tunnel/local/proxy_session.py</td><td>会话与 transfer</td><td>ack/retry/roundtrip/failed 聚合；M stop 尾账</td><td><span class="tag pending">I 待疗效 / M 待重启</span></td></tr>
+<tr><td class="path">x_tunnel/local/front_dispatcher.py</td><td>x_tunnel front 调用</td><td>front retry 按 host+path 聚合；M stop 尾账</td><td><span class="tag pending">I 待疗效 / M 待重启</span></td></tr>
+<tr><td class="path">x_tunnel/local/base_container.py</td><td>下载接收池</td><td>mark_sn_timeout 按 SN 聚合；M reset 尾账</td><td><span class="tag pending">J 待疗效 / M 待重启</span></td></tr>
 </tbody></table></div>
 <p class="small">权威细节来源：<a href="XX-Net-macOS-ARM64-修复记录.md">XX-Net-macOS-ARM64-修复记录.md</a> 与 <a href="../Coding/XX-Net-5.16.7.1/LOCAL-VERSION.md">LOCAL-VERSION.md</a>。本总结覆盖至 M 阶段工作区，提交、部署与重启状态以第 2 节为准。</p>
 </section>

@@ -1,0 +1,23 @@
+--- /Applications/XX-Net/code/default/x_tunnel/local/front_dispatcher.py	2026-10-29 20:26:33
++++ /Users/solvan/Downloads/XX-Net-Develop/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/front_dispatcher.py	2026-10-31 19:22:05
+@@ -26,6 +26,8 @@
+ def init():
+     global cloudflare_front
+ 
++    front_retry_log_throttle.reset()
++
+     if g.config.enable_gae_proxy:
+         from . import gae_front
+         if gae_front.get_dispatcher():
+@@ -227,4 +229,8 @@
+     all_fronts = []
+     light_fronts = []
+     session_fronts = []
+-    cloudflare_front = None
+\ No newline at end of file
++    cloudflare_front = None
++
++    suppressed, key_count = front_retry_log_throttle.flush()
++    if suppressed:
++        xlog.warn("front retry final suppressed:%d keys:%d", suppressed, key_count)
+\ No newline at end of file

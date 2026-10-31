@@ -1,0 +1,12 @@
+--- /Applications/XX-Net/code/default/lib/noarch/front_base/connect_manager.py	2026-10-29 18:31:47
++++ /Users/solvan/Downloads/XX-Net-Develop/Coding/XX-Net-5.16.7.1/code/default/lib/noarch/front_base/connect_manager.py	2026-10-31 19:06:40
+@@ -197,6 +197,9 @@
+ 
+     def stop(self):
+         self.running = False
++        suppressed, key_count = self.connect_ssl_log_throttle.flush()
++        if suppressed:
++            self.logger.warn("connect_ssl final suppressed:%d keys:%d", suppressed, key_count)
+ 
+     def set_ssl_created_cb(self, cb):
+         self.ssl_timeout_cb = cb

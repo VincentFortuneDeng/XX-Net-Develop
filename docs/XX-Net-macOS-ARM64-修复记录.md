@@ -766,7 +766,7 @@ I 阶段代码于 2026-10-29 完成，2026-10-31 已与 J 一并部署到 `/Appl
 ## 生效边界
 - K/L 均已部署，但当前进程未重启、尚未加载；部署文件 cmp/SHA-256 已校验，备份与生产验证目标见上节。
 
-# M 阶段：LogThrottle 生命周期尾账结算（2026-10-31，开发完成待部署）
+# M 阶段：LogThrottle 生命周期尾账结算（2026-10-31，已部署待重启）
 ## 范围与语义
 - 用户批准采用生命周期 flush：不增加后台脉冲、定时器或线程，只在真实 `stop/reset` 终点结算仍留在内存中的 suppressed。每个对象最多补一条聚合 WARN，不逐 key 输出，不缓存或补打被抑制日志原文。
 - `LogThrottle.flush()` 与 `allow()` 共用账本锁，原子返回 `(suppressed_total, pending_key_count)`、清空账本并封住旧生命周期；`pending_key_count` 只统计 suppressed>0 的 key。空账和重复 flush 返回 `(0, 0)`，stop 后迟到事件不得重新入账。`reset()` 清空并显式开启下一生命周期，ProxySession.start 与 front_dispatcher.init 均重新开账。
@@ -780,4 +780,5 @@ I 阶段代码于 2026-10-29 完成，2026-10-31 已与 J 一并部署到 `/Appl
 - B10/M9 另验证多 key 聚合、清账、重复 flush/reset 不重复及构造器安全；既有 M8 探针补齐 flush 委托后继续证明 reset/mark 原子性。
 - 最终结果：xlog **38/38**、dispatcher **12/12**、x_tunnel **14/14**、SN **9/9**，K S1/S2 与 DNS **9/9** 全过；五套既有回归全部通过，fd 探针保持 **A(detached)**；六个生产文件 `py_compile` 与 `git diff --check` 通过。
 ## 生效边界
-- 当前为开发快照与离线测试证据，尚未部署、未重启，不能声称生产尾账已经落盘。部署后仍需用户重启加载；生产只在实际 stop/reset 且有 suppressed 时出现 final 汇总，无目标事件只记未触发。
+- M 六个生产文件已于 2026-10-31 部署到 `/Applications/XX-Net`，覆盖前 `.orig` 与部署差异 `.diff` 保存在 `backups/pre-rsync-20261031-m/`，既有 H/I/J/K/L 备份均未改动。rsync 后逐文件 cmp 与 SHA-256 一致：xlog `ba882e52bc7320512b44bf64c3b7372c3c20da909a6747429f4cdf0ab82671df`，http_dispatcher `e9f35a537a72d7742e2cc056671bd050baab520f9f1eb687d57395afb3be0981`，connect_manager `7c47926fc273c58eae09f98c21b43d628f2cf769861d645b6d177ef29a308cd8`，proxy_session `dffa784dd3d66045eaefb9b779a610e6b209212daa5a94f8f4f8b221455baed8`，base_container `8b576647f1ff54002c690dec0fd86d748fbef76fd41621a65481cffd4294be26`，front_dispatcher `e172e682a286aaba0f184a35b11386f3de984a827a83adea694982c1f63f6ae0`。
+- 当前进程尚未重启，K/L/M 均未由新进程加载；离线测试和文件校验不等于生产疗效。用户重启后核对新 PID/启动时间、8086、代理 204 与启动 ERROR；生产只在实际 stop/reset 且有 suppressed 时出现 final 汇总，无目标事件只记未触发。
