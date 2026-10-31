@@ -197,6 +197,44 @@ check("B9 top level warning delegates to warn",
       and warning_calls == [("warning %s", ("works",), {"extra": 1})],
       "error=%r calls=%r" % (warning_error, warning_calls))
 
+# 生命周期终点只结算未落盘的抑制计数；清账后不得重复结算或带入新生命周期。
+flush_throttle = LogThrottle(60)
+flush_throttle.allow("a")
+flush_throttle.allow("a")
+flush_throttle.allow("b")
+flush_throttle.allow("b")
+flush_throttle.allow("b")
+flush_throttle.allow("empty")
+flush_result = None
+repeat_flush_result = None
+flush_error = None
+try:
+    flush_result = flush_throttle.flush()
+    repeat_flush_result = flush_throttle.flush()
+except Exception as e:
+    flush_error = e
+check("B10 flush settles tail counts once and clears ledger",
+      flush_error is None and flush_result == (3, 2)
+      and repeat_flush_result == (0, 0) and not flush_throttle.hits,
+      "result=%r repeat=%r hits=%r error=%r" %
+      (flush_result, repeat_flush_result, flush_throttle.hits, flush_error))
+
+# flush 封住已结束生命周期；reset 显式开启下一生命周期，迟到事件不得留下新尾账。
+sealed_allow = None
+reopened_allow = None
+seal_error = None
+try:
+    sealed_allow = flush_throttle.allow("late")
+    flush_throttle.reset()
+    reopened_allow = flush_throttle.allow("fresh")
+except Exception as e:
+    seal_error = e
+check("B11 flush seals lifecycle and reset reopens it",
+      seal_error is None and sealed_allow == (False, 0) and reopened_allow == (True, 0)
+      and set(flush_throttle.hits) == {"fresh"},
+      "late=%r reopened=%r hits=%r error=%r" %
+      (sealed_allow, reopened_allow, flush_throttle.hits, seal_error))
+
 # --- C: G-phase HEAD probe throttling, aggregated by front ip_str ---
 # Load the real worker/connect-manager modules with only their external
 # dependencies stubbed. No running process is imported or touched.
@@ -478,6 +516,32 @@ check("E8 real init keeps instance throttles independent",
       first_manager.connect_ssl_log_throttle is not second_manager.connect_ssl_log_throttle
       and len(isolation_log.warnings) == 2 and isolation_queue.qsize() == 2,
       "warnings=%r queue=%d" % (isolation_log.warnings, isolation_queue.qsize()))
+
+# stop 是该实例账本的真实终点：补一条尾账，且重复 stop 不重复输出。
+flush_connect_log = CaptureLogger()
+flush_manager = make_connect_ssl_manager(flush_connect_log)
+flush_manager.connect_ssl_log_throttle.allow("192.0.2.14:ValueError")
+flush_manager.connect_ssl_log_throttle.allow("192.0.2.14:ValueError")
+flush_stop_error = None
+try:
+    flush_manager.stop()
+    flush_manager.stop()
+except Exception as e:
+    flush_stop_error = e
+check("E9 stop flushes connect_ssl tail exactly once",
+      flush_stop_error is None and not flush_manager.running
+      and flush_connect_log.warnings == ["connect_ssl final suppressed:1 keys:1"],
+      "warnings=%r error=%r" % (flush_connect_log.warnings, flush_stop_error))
+
+# stop 后到达的迟到回调不能重新开账，重复 stop 也不能补第二条 final。
+flush_manager.connect_ssl_log_throttle.allow("late:RuntimeError")
+flush_manager.connect_ssl_log_throttle.allow("late:RuntimeError")
+flush_manager.stop()
+check("E10 stopped connect_ssl ledger stays sealed",
+      flush_connect_log.warnings == ["connect_ssl final suppressed:1 keys:1"]
+      and not flush_manager.connect_ssl_log_throttle.hits,
+      "warnings=%r hits=%r" %
+      (flush_connect_log.warnings, flush_manager.connect_ssl_log_throttle.hits))
 connect_manager_mod.threading = real_connect_threading
 
 print()

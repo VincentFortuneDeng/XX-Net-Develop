@@ -121,6 +121,9 @@ class HttpsDispatcher(object):
         self.running = False
         self.request_queue.put(None)
         self.close_all_worker("stop")
+        suppressed, key_count = self.retry_log_throttle.flush()
+        if suppressed:
+            self.logger.warn("dispatcher final suppressed:%d keys:%d", suppressed, key_count)
 
     def _debug_log(self, fmt, *args, **kwargs):
         if not self.config.show_state_debug:

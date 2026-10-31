@@ -197,6 +197,9 @@ class ConnectManager(object):
 
     def stop(self):
         self.running = False
+        suppressed, key_count = self.connect_ssl_log_throttle.flush()
+        if suppressed:
+            self.logger.warn("connect_ssl final suppressed:%d keys:%d", suppressed, key_count)
 
     def set_ssl_created_cb(self, cb):
         self.ssl_timeout_cb = cb

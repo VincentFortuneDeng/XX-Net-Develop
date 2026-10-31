@@ -290,13 +290,24 @@ class BlockReceivePool():
         self.logger = logger
         self.reset()
 
-    def reset(self):
+    def reset(self, defer_log=False):
         # xlog.info("recv_pool reset")
+        suppressed = 0
+        key_count = 0
         with self.lock:
+            if hasattr(self, "timeout_log_throttle"):
+                suppressed, key_count = self.timeout_log_throttle.flush()
             self.next_sn = 1
             self.block_list = []
             self.timeout_sn_list = {}
             self.timeout_log_throttle = LogThrottle(60)
+        if not defer_log:
+            self.log_reset(suppressed, key_count)
+        return suppressed, key_count
+
+    def log_reset(self, suppressed, key_count):
+        if suppressed:
+            self.logger.warn("mark_sn_timeout final suppressed:%d keys:%d", suppressed, key_count)
 
     def put(self, sn, data):
         # xlog.debug("recv_pool put sn:%d len:%d", sn, len(data))

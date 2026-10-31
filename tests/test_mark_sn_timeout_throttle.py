@@ -165,6 +165,9 @@ class SignalThrottle(object):
     def allow(self, key):
         old_allow_used.set()
         return old_throttle.allow(key)
+
+    def flush(self):
+        return old_throttle.flush()
 pool.timeout_log_throttle = SignalThrottle()
 reset_constructing = threading.Event()
 finish_reset = threading.Event()
@@ -189,6 +192,20 @@ check("M8 reset and mark are atomic for new sn lifecycle",
       and log.warnings[-1] == "mark_sn_timeout sn:51 t:90.000000"
       and pool.timeout_sn_list[51]["server_send_time"] == 110.0,
       "old_allow=%s warnings=%r" % (old_allow_used.is_set(), log.warnings))
+
+# M9：reset 结算旧池被抑制的 renew；新池从空账开始，重复 reset 不重复输出。
+pool, log = make_pool()
+pool.mark_sn_timeout(61, 100.0, 200.0)
+pool.mark_sn_timeout(61, 101.0, 200.0)
+pool.reset()
+pool.reset()
+check("M9 reset flushes sn tail once without constructor failure",
+      log.warnings == [
+          "mark_sn_timeout sn:61 t:100.000000",
+          "mark_sn_timeout final suppressed:1 keys:1",
+      ] and pool.next_sn == 1 and pool.timeout_sn_list == {},
+      "warnings=%r next_sn=%d timeout=%r" %
+      (log.warnings, pool.next_sn, pool.timeout_sn_list))
 
 print()
 if failures:

@@ -26,6 +26,8 @@ front_retry_log_throttle = LogThrottle(60)
 def init():
     global cloudflare_front
 
+    front_retry_log_throttle.reset()
+
     if g.config.enable_gae_proxy:
         from . import gae_front
         if gae_front.get_dispatcher():
@@ -228,3 +230,7 @@ def stop():
     light_fronts = []
     session_fronts = []
     cloudflare_front = None
+
+    suppressed, key_count = front_retry_log_throttle.flush()
+    if suppressed:
+        xlog.warn("front retry final suppressed:%d keys:%d", suppressed, key_count)

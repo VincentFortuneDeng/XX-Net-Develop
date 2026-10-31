@@ -375,6 +375,147 @@ check("X8 delayed old response does not share new session key",
       "warnings=%r stat=%s notify=%d" %
       (reset_warnings, reset_info["stat"], reset_session.wait_queue.count))
 
+# X9：首次 stop 结算 transfer 尾账；重复 stop 不重复输出，也不逐 key 补打。
+flush_session = make_session(b"flush-session")
+class LifecycleStub(object):
+    def reset(self, defer_log=False):
+        return 0, 0
+
+    def log_reset(self, suppressed, key_count):
+        pass
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+flush_session.send_buffer = LifecycleStub()
+flush_session.receive_process = LifecycleStub()
+flush_session.wait_queue = LifecycleStub()
+flush_session.wait_queue.notify = lambda: None
+flush_session.connection_pipe = LifecycleStub()
+flush_session.close_all_connection = lambda: None
+flush_session.transfer_warn(b"flush-session", 91, "retry", "retry transfer_no:%d", 91)
+flush_session.transfer_warn(b"flush-session", 91, "retry", "retry transfer_no:%d", 91)
+before = len(key_log.warnings)
+flush_stop_error = None
+try:
+    flush_session.stop()
+    flush_session.stop()
+except Exception as e:
+    flush_stop_error = e
+check("X9 session stop flushes transfer tail once",
+      flush_stop_error is None and not flush_session.running
+      and key_log.warnings[before:] == ["transfer final suppressed:1 keys:1"],
+      "warnings=%r error=%r" % (key_log.warnings[before:], flush_stop_error))
+
+# X10：front 模块 stop 是模块级 retry 账本的终点。
+front.front_retry_log_throttle = LogThrottle(60)
+front.front_retry_log_throttle.allow(("server.example", "/data?tid=101"))
+front.front_retry_log_throttle.allow(("server.example", "/data?tid=101"))
+front.all_fronts = []
+before = len(front_log.warnings)
+front_stop_error = None
+try:
+    front.stop()
+    front.stop()
+except Exception as e:
+    front_stop_error = e
+check("X10 front stop flushes retry tail once",
+      front_stop_error is None
+      and front_log.warnings[before:] == ["front retry final suppressed:1 keys:1"],
+      "warnings=%r error=%r" % (front_log.warnings[before:], front_stop_error))
+
+# X11：stop 后的迟到事件不能重新入账，否则重复 stop 会重复汇总或留下永久尾账。
+before = len(key_log.warnings)
+flush_session.transfer_warn(b"late-session", 92, "retry", "late transfer_no:%d", 92)
+flush_session.transfer_warn(b"late-session", 92, "retry", "late transfer_no:%d", 92)
+flush_session.stop()
+front.front_retry_log_throttle.allow(("late.example", "/data?tid=102"))
+front.front_retry_log_throttle.allow(("late.example", "/data?tid=102"))
+front.stop()
+check("X11 stopped session and front ledgers stay sealed",
+      key_log.warnings[before:] == [] and not flush_session.transfer_log_throttle.hits
+      and not front.front_retry_log_throttle.hits,
+      "session_warnings=%r session_hits=%r front_hits=%r" %
+      (key_log.warnings[before:], flush_session.transfer_log_throttle.hits,
+       front.front_retry_log_throttle.hits))
+
+# X12：接收池 reset 的汇总必须延迟到 ProxySession.lock 释放之后。
+outer_session = make_session(b"outer-lock")
+class OuterLockReceive(object):
+    def __init__(self):
+        self.defer_log = None
+        self.log_locked = None
+
+    def reset(self, defer_log=False):
+        self.defer_log = defer_log
+        return 1, 1
+
+    def log_reset(self, suppressed, key_count):
+        self.log_locked = outer_session.lock.locked()
+        if suppressed:
+            proxy_log.warn("mark_sn_timeout final suppressed:%d keys:%d", suppressed, key_count)
+outer_receive = OuterLockReceive()
+outer_session.receive_process = outer_receive
+outer_session.send_buffer = LifecycleStub()
+outer_session.wait_queue = LifecycleStub()
+outer_session.wait_queue.notify = lambda: None
+outer_session.connection_pipe = LifecycleStub()
+outer_session.close_all_connection = lambda: None
+before = len(key_log.warnings)
+outer_session.stop()
+check("X12 receive pool summary writes after outer session lock",
+      outer_receive.defer_log is True and outer_receive.log_locked is False
+      and key_log.warnings[before:] == ["mark_sn_timeout final suppressed:1 keys:1"],
+      "defer=%r locked=%r warnings=%r" %
+      (outer_receive.defer_log, outer_receive.log_locked, key_log.warnings[before:]))
+
+# X13：清理由异常中断时，finally 仍须结算 transfer；第二次 stop 不得重复。
+failed_session = make_session(b"failed-stop")
+class FailingReceive(object):
+    def reset(self, defer_log=False):
+        raise RuntimeError("reset failed")
+
+    def log_reset(self, suppressed, key_count):
+        raise AssertionError("reset 未返回尾账时不应写接收池汇总")
+failed_session.receive_process = FailingReceive()
+failed_session.send_buffer = LifecycleStub()
+failed_session.wait_queue = LifecycleStub()
+failed_session.wait_queue.notify = lambda: None
+failed_session.connection_pipe = LifecycleStub()
+failed_session.close_all_connection = lambda: None
+failed_session.transfer_warn(b"failed-stop", 93, "retry", "retry transfer_no:%d", 93)
+failed_session.transfer_warn(b"failed-stop", 93, "retry", "retry transfer_no:%d", 93)
+before = len(key_log.warnings)
+stop_errors = []
+for _ in range(2):
+    try:
+        failed_session.stop()
+    except Exception as e:
+        stop_errors.append(e)
+check("X13 stop cleanup failure still flushes transfer once",
+      len(stop_errors) == 1 and isinstance(stop_errors[0], RuntimeError)
+      and key_log.warnings[before:] == ["transfer final suppressed:1 keys:1"]
+      and not failed_session.transfer_log_throttle.hits,
+      "errors=%r warnings=%r hits=%r" %
+      (stop_errors, key_log.warnings[before:], failed_session.transfer_log_throttle.hits))
+
+# X14：reset 后的新 session 生命周期必须重新允许首报，不能永久封口。
+flush_session.login_session = lambda: True
+start_error = None
+try:
+    flush_session.start()
+except Exception as e:
+    start_error = e
+before = len(key_log.warnings)
+flush_session.transfer_warn(b"fresh-session", 94, "retry", "retry transfer_no:%d", 94)
+check("X14 session start reopens throttle for fresh lifecycle",
+      start_error is None and flush_session.running
+      and key_log.warnings[before:] == ["retry transfer_no:94"],
+      "error=%r running=%r warnings=%r" %
+      (start_error, flush_session.running, key_log.warnings[before:]))
+
 print()
 if failures:
     print("RESULT: %d FAILURES: %s" % (len(failures), failures))

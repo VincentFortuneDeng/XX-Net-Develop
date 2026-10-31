@@ -250,6 +250,46 @@ check("R10 none host keeps request failure semantics without log exception",
       "warnings=%r host=%r fail=%d count=%d" %
       (none_log.warnings, none_disp.last_host, none_disp.fail_num, none_disp.task_count))
 
+# stop 在关闭 worker 后结算 dispatcher 的聚合尾账，不输出逐 key 日志。
+flush_log = CaptureLogger()
+flush_disp = make_dispatcher(flush_log)
+flush_disp.workers = []
+flush_disp.h1_num = 0
+flush_disp.h2_num = 0
+retry_once(flush_disp, make_task(flush_disp, 101))
+retry_once(flush_disp, make_task(flush_disp, 102))
+flush_stop_error = None
+try:
+    flush_disp.stop()
+    flush_disp.stop()
+except Exception as e:
+    flush_stop_error = e
+check("R11 stop flushes dispatcher tail once",
+      flush_stop_error is None and not flush_disp.running
+      and flush_log.warnings == [
+          "retry_task_cb: b'POST ny3.xx-net.org/data?tid=101', trace::0",
+          "dispatcher final suppressed:1 keys:1",
+      ]
+      and flush_disp.fail_num == 2,
+      "warnings=%r fail=%d error=%r" %
+      (flush_log.warnings, flush_disp.fail_num, flush_stop_error))
+
+# 首次 stop 后的真实 retry 回调仍走原有 stopped 失败出口，但不得重新开账。
+assert flush_disp.request_queue.get_nowait() is None
+assert flush_disp.request_queue.get_nowait() is None
+flush_disp.retry_task_cb(make_task(flush_disp, 103, front="198.18.0.199"))
+flush_disp.retry_task_cb(make_task(flush_disp, 104, front="198.18.0.199"))
+flush_disp.stop()
+check("R12 late retries after stop do not reopen lifecycle ledger",
+      flush_log.warnings == [
+          "retry_task_cb: b'POST ny3.xx-net.org/data?tid=101', trace::0",
+          "dispatcher final suppressed:1 keys:1",
+          "b'POST ny3.xx-net.org/data?tid=103' response_fail:retry but stopped.",
+          "b'POST ny3.xx-net.org/data?tid=104' response_fail:retry but stopped.",
+      ] and flush_disp.fail_num == 4 and not flush_disp.retry_log_throttle.hits,
+      "warnings=%r fail=%d hits=%r" %
+      (flush_log.warnings, flush_disp.fail_num, flush_disp.retry_log_throttle.hits))
+
 print()
 if failures:
     print("RESULT: %d FAILURES: %s" % (len(failures), failures))

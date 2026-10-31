@@ -360,10 +360,13 @@ class LogThrottle(object):
         self.interval = interval
         self.lock = threading.Lock()
         self.hits = {}  # key => [last_logged_ts, suppressed_count]
+        self.sealed = False
 
     def allow(self, key):
         now = time.time()
         with self.lock:
+            if self.sealed:
+                return False, 0
             entry = self.hits.get(key)
             if entry is not None and now - entry[0] < self.interval:
                 entry[1] += 1
@@ -374,6 +377,23 @@ class LogThrottle(object):
             if len(self.hits) > 512:
                 self._prune(now)
             return True, suppressed
+
+    def flush(self):
+        with self.lock:
+            suppressed = 0
+            key_count = 0
+            for entry in self.hits.values():
+                if entry[1]:
+                    suppressed += entry[1]
+                    key_count += 1
+            self.hits = {}
+            self.sealed = True
+            return suppressed, key_count
+
+    def reset(self):
+        with self.lock:
+            self.hits = {}
+            self.sealed = False
 
     def _prune(self, now):
         # called with lock held; drop expired keys so long-tail keys

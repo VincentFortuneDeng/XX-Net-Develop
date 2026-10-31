@@ -120,6 +120,7 @@ class ProxySession(object):
                 xlog.warn("session try to run but is running.")
                 return True
 
+            self.transfer_log_throttle.reset()
             self.session_id = utils.to_bytes(utils.generate_random_lowercase(8))
             self.last_conn_id = 0
             self.last_transfer_no = 0
@@ -216,17 +217,27 @@ class ProxySession(object):
         self.running = False
         self.session_id = ""
         self.target_on_roads = 0
-        with self.lock:
-            for i in range(0, g.config.concurent_thread_num):
-                self.wait_queue.notify()
+        receive_tail = None
+        try:
+            with self.lock:
+                for i in range(0, g.config.concurent_thread_num):
+                    self.wait_queue.notify()
 
-            self.close_all_connection()
-            self.send_buffer.reset()
-            self.receive_process.reset()
-            self.wait_queue.stop()
-            self.connection_pipe.stop()
+                self.close_all_connection()
+                self.send_buffer.reset()
+                receive_tail = self.receive_process.reset(defer_log=True)
+                self.wait_queue.stop()
+                self.connection_pipe.stop()
 
-            xlog.debug("session stopped.")
+                xlog.debug("session stopped.")
+        finally:
+            try:
+                if receive_tail is not None:
+                    self.receive_process.log_reset(*receive_tail)
+            finally:
+                suppressed, key_count = self.transfer_log_throttle.flush()
+                if suppressed:
+                    xlog.warn("transfer final suppressed:%d keys:%d", suppressed, key_count)
 
     def reset(self):
         xlog.debug("session reset")

@@ -765,3 +765,19 @@ I 阶段代码于 2026-10-29 完成，2026-10-31 已与 J 一并部署到 `/Appl
 - 最终完整回归：K S1/S2、J 8/8、dispatcher 10/10、I x_tunnel 8/8、xlog 34/34、DNS 9/9，五套既有回归及 fd 探针全部通过，目标文件 py_compile 与 `git diff --check` 通过。
 ## 生效边界
 - K/L 均已部署，但当前进程未重启、尚未加载；部署文件 cmp/SHA-256 已校验，备份与生产验证目标见上节。
+
+# M 阶段：LogThrottle 生命周期尾账结算（2026-10-31，开发完成待部署）
+## 范围与语义
+- 用户批准采用生命周期 flush：不增加后台脉冲、定时器或线程，只在真实 `stop/reset` 终点结算仍留在内存中的 suppressed。每个对象最多补一条聚合 WARN，不逐 key 输出，不缓存或补打被抑制日志原文。
+- `LogThrottle.flush()` 与 `allow()` 共用账本锁，原子返回 `(suppressed_total, pending_key_count)`、清空账本并封住旧生命周期；`pending_key_count` 只统计 suppressed>0 的 key。空账和重复 flush 返回 `(0, 0)`，stop 后迟到事件不得重新入账。`reset()` 清空并显式开启下一生命周期，ProxySession.start 与 front_dispatcher.init 均重新开账。
+- 接入五个真实终点：`HttpsDispatcher.stop()` 在关闭 worker 后结算 dispatcher；`ConnectManager.stop()` 结算 connect_ssl；`ProxySession.stop()` 仅首次有效 stop 结算 transfer，reset 经 stop 自然形成边界；`front_dispatcher.stop()` 在停止全部 front 后结算模块级 retry；`BlockReceivePool.reset()` 在原接收池锁内取出旧账并替换，构造器首次无旧账安全。
+- 接收池默认在自身锁外写汇总；ProxySession 调用 `reset(defer_log=True)` 取回尾账，在外层 `ProxySession.lock` 释放后才调用 `log_reset()`，避免嵌套业务锁内写磁盘日志。ProxySession.stop 用 `finally` 保证清理异常时仍结算 transfer；接收池日志与 transfer 结算之间也用嵌套 finally 隔离。
+- http1 的 HEAD 是跨短命 worker 的类级账本，没有安全的全局终点；不能在单个 worker.close 时清空其他 worker 的账，保持现状。沉默剪枝与进程异常退出仍可能丢失最后的 suppressed 数量注解；若需完整审计，应使用独立事件统计。
+- 所有重试、Queue、状态迁移、notify、SN 更新、传输与响应路径不变；stop 后真实 retry 仍走原 stopped 失败出口，只是不重新打开日志账本。
+## TDD、独立审查与完整验证
+- 初版六项新测试均先在旧实现按目标 RED：B10 因缺少 `LogThrottle.flush` 失败；E9/R11/X9/X10/M9 分别证明五个终点没有尾账输出。最小实现后全部 GREEN。
+- 独立审查无 Critical，三项 Important 在一轮修复完成，均新增真实失败测试后修复：① B11/E10/R12/X11 证明 stop 后迟到事件会重开账或重复 final，加入 flush 封口与 reset 重开；R12 使用真实 retry_task_cb，确认 stopped 业务出口不变。② X12 证明接收池汇总会在外层会话锁内写日志，改为 defer_log 后确认写日志时外层锁已释放。③ X13 让 receive_process.reset 抛出 RuntimeError，证明旧实现永久跳过 transfer 结算，finally 修复后只结算一次。X14 验证新 start 可重新首报。
+- B10/M9 另验证多 key 聚合、清账、重复 flush/reset 不重复及构造器安全；既有 M8 探针补齐 flush 委托后继续证明 reset/mark 原子性。
+- 最终结果：xlog **38/38**、dispatcher **12/12**、x_tunnel **14/14**、SN **9/9**，K S1/S2 与 DNS **9/9** 全过；五套既有回归全部通过，fd 探针保持 **A(detached)**；六个生产文件 `py_compile` 与 `git diff --check` 通过。
+## 生效边界
+- 当前为开发快照与离线测试证据，尚未部署、未重启，不能声称生产尾账已经落盘。部署后仍需用户重启加载；生产只在实际 stop/reset 且有 suppressed 时出现 final 汇总，无目标事件只记未触发。
