@@ -19,6 +19,7 @@
 | `code/default/smart_router/lang/zh_CN/LC_MESSAGES/messages.po` | 同上（问题二） |
 | `code/default/launcher/web_ui/status.html` | 系统信息标签 i18n 包裹（问题二）；根修：`loadModuleEnableFlags()` 拉 `GET /config?cmd=get_config`，gae_proxy 未启用时 updateDetailStatus / updateNoobStatus / OneKeyReport 跳过轮询（E 前置根修） |
 | `code/default/x_tunnel/local/upload_logs.py` | 根修：`get_module_enable_flags()` 按启用状态过滤 debug/log 轮询条目（失败安全：拉取失败保持原全量轮询） |
+| `code/default/smart_router/local/__init__.py` | K 阶段：将 `g.local_ips`、`g.dns_query` 与 `g.dns_srv` 初始化前移到 `proxy_server.start()` 之前，消除启动首请求访问 None DNS 查询对象或 UDP 中继的竞态；代理/DNS 地址分离，端口参数与业务逻辑不变 |
 | `code/default/smart_router/local/dns_query.py` | 四项修复 1：DoT `connect` 判空（B1/B2：close 保留 + 注释实证、基类 direct_connect fd 泄漏与日志参数修复、代理路径 connect 失败 close）；E 阶段：`_is_usable_nameserver()` nameserver 过滤（拒 fe80::/10、fc00::/7、::1、ff00::/8，放行 IPv4 与全球单播 v6）+ get_local_dns_server 过滤前移与兔底；H 阶段：EHOSTUNREACH/ENETUNREACH per-nameserver 60s 退避，冷却跳过、全冷却最早到期单点 fail-open、重复失败不延长、成功清账 |
 | `code/default/smart_router/local/pipe_socks.py` | 四项修复 2+4：`try_add` fd 竞态（fileno 预检 + ValueError/KeyError DEBUG）；BlockingIOError 限流 `warn_send_block`（同 socket 每秒 1 条 + suppressed 聚合）；B3 try_remove 对称处理；B6 close 时补打 final 并清账 |
 | `code/default/x_tunnel/local/tls_relay_front/ip_manager.py` | 四项修复 3：`ipv6_available()` UDP 探测（全球单播判定，缓存 300s）+ get_ip_sni_host 过滤 IPv6 前端；B4 修正 `::` 误判；B5 过滤 INFO 可观测。`seley_front/ip_manager.py` 经相对导入继承 |
@@ -36,6 +37,7 @@
 | `../../tests/test_retry_log_throttle.py` | I 阶段 dispatcher 离线测试：同 front/endpoint 忽略 tid，不同 front/host/endpoint 独立，retry 与 timeout/status 共窗，worker=None 安全，下一窗 suppressed、完整 URL 保留、20 线程并发单 WARN，非 UTF-8 path 重试/响应不变 = 9/9 PASS |
 | `../../tests/test_xtunnel_log_throttle.py` | I 阶段 x_tunnel 离线测试：session/transfer/kind 隔离、下一窗 suppressed、20 线程单放行、状态迁移/retry/notify/响应不变，front retry 同 tid 聚合，以及 reset 后旧响应不与新 session 错账 = 8/8 PASS |
 | `../../tests/test_mark_sn_timeout_throttle.py` | J 阶段接收池离线测试：同 SN 聚合且状态更新、不同 SN/池实例独立、跨窗 suppressed、reset 后同号 SN 首报、20 线程单 WARN 且保存最大 t、静默旧事件不消耗窗口、reset/mark 可控交错保证新生命周期首报 = 8/8 PASS |
+| `../../tests/test_smart_router_startup_race.py` | K 阶段启动竞态离线测试：加载真实 `start()`，在 HTTPServer.start 边界模拟启动即收到域名请求与 UDP ASSOCIATE；S1/S2 分别复现 NoneType DNS 查询对象/中继端口，前移后均通过且 ready=True |
 
 ## 修复阶段索引（详见 docs/XX-Net-macOS-ARM64-修复记录.md）
 
@@ -47,8 +49,9 @@
 - **F 阶段（日志治理，2026-10-27 晚—10-28 午）**：T1 历史日志归档止损（7 份约 237MB，commit `7738967`）；T2 真问题三分类清单（残留 bug 零修复级）；T3 五文件日志机制改造（warning_log 10MB 滚动、`LogThrottle` 节流、reserved/frag 降 DEBUG、not enough ip / retry / HEAD 探测三处告警 60s 节流）+ 第 7 套离线测试 `test_xlog_roll_f.py`（10/10）；T4 重启后审计（2026-10-28 10:44 用户重启 PID 14268）：seley retry trace 846→3（-99.6%）、not enough ip tls_relay 2,066→7 全带抑制标记、reserved/frag 32,596→0、7 份日志 ERROR 合计 0、增速受控
 - **G 阶段（节流尾账完善，2026-10-28 午后，无部署）**：提案 A+B 落盘——not enough ip 放行行补上一窗计数、恢复时结算尾窗与本轮累计；HEAD 三出口改为按前端 `ip_str` 跨 worker 聚合；`test_xlog_roll_f.py` 扩至 23/23，五套既有回归与 fd 探针结论不变；未实施 C，未 rsync、未重启
 - **H 阶段（建连与 DNS 治理，2026-10-29，已部署并重启）**：total 改为本轮旱态总事件数（首次为 1）；`_connect_ssl` 按 `(ip_str, 异常类别)` 60s 聚合并保持 Queue 全送达；DNS 对 EHOSTUNREACH/ENETUNREACH 做 per-nameserver 60s 退避与全冷却单点 fail-open。快照测试 30/30 + 7/7 PASS，五套既有回归全 PASS、fd 探针 A(detached)。已部署至 `/Applications/XX-Net`，用户重启后 PID 2066（19:00:28）加载；`_connect_ssl` suppressed 与 total=1 新口径已获生产日志实证，DNS 延长观察约 82 分钟未触发目标 errno，不声称现场疗效
-- **I 阶段（前端与 x_tunnel 故障链日志聚合，2026-10-29，未部署）**：dispatcher 改按 `(method, host, 去查询参数 endpoint bytes, front ip)` 聚合 retry/timeout/status；x_tunnel 按事件所属 `(session_id, transfer_no, kind)` 聚合四类 WARN，front retry 按完整 `(host, path)` 聚合；补强 LogThrottle、DNS 与真实初始化实例隔离测试。独立审查两项 Important（非 UTF-8 path、reset 后旧响应错账）已 RED→GREEN 修复；新测试 9/9 + 8/8，综合测试 33/33 + 9/9，五套既有回归与 fd 探针通过；只改日志，未改重试、状态、Queue、评分或传输路径，未 rsync、未重启、未 push
-- **J 阶段（下载 SN 超时日志聚合，2026-10-29，未部署）**：复评 H 日志发现 `mark_sn_timeout` 首报 363、renew 379；按 SN 60s 聚合首报/renew，reset 在原锁内同步重建账本，状态更新条件不变。独立审查两项 Important（静默旧事件误计窗口、reset/mark 非原子）已 RED→GREEN 修复；新测试 8/8，全部新旧回归与 fd 探针通过；`req get response timeout` 留待 I 部署后复评，未 rsync、未重启、未 push
+- **I 阶段（前端与 x_tunnel 故障链日志聚合，2026-10-29 实施，2026-10-31 已部署并重启）**：dispatcher 改按 `(method, host, 去查询参数 endpoint bytes, front ip)` 聚合 retry/timeout/status；x_tunnel 按事件所属 `(session_id, transfer_no, kind)` 聚合四类 WARN，front retry 按完整 `(host, path)` 聚合；补强 LogThrottle、DNS 与真实初始化实例隔离测试。独立审查两项 Important（非 UTF-8 path、reset 后旧响应错账）已 RED→GREEN 修复；新测试 9/9 + 8/8，综合测试 33/33 + 9/9，五套既有回归与 fd 探针通过；只改日志，未改重试、状态、Queue、评分或传输路径。已于 2026-10-31 与 J 一并 rsync并由用户重启（PID 24668，18:16:13）；代理 204，首批 I 独立首报符合设计、J 未触发，未 push
+- **J 阶段（下载 SN 超时日志聚合，2026-10-29 实施，2026-10-31 已部署并重启）**：复评 H 日志发现 `mark_sn_timeout` 首报 363、renew 379；按 SN 60s 聚合首报/renew，reset 在原锁内同步重建账本，状态更新条件不变。独立审查两项 Important（静默旧事件误计窗口、reset/mark 非原子）已 RED→GREEN 修复；新测试 8/8，全部新旧回归与 fd 探针通过；`req get response timeout` 留待重启后复评。已于 2026-10-31 与 I 一并 rsync并由用户重启；代理 204，首批 I 独立首报符合设计、J 未触发，未 push
+- **K 阶段（Smart Router 启动竞态，2026-10-31，未部署）**：生产重启首秒出现 `NoneType.query_recursively`；独立审查补充 SOCKS5 UDP ASSOCIATE 的 `NoneType.udp_relay_port` 同类窗口。将 `g.local_ips`、`g.dns_query`、`g.dns_srv` 全部前移到 `proxy_server.start()` 之前，分离代理/DNS 地址变量。S1/S2 均 RED→GREEN，完整回归通过；两项 Minor（启动失败资源清理、测试 sys.modules 隔离）延后。未部署、未重启、未 push
 
 ## 已知评估后接受项
 

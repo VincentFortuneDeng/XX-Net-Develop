@@ -1,0 +1,51 @@
+--- /Applications/XX-Net/code/default/lib/noarch/front_base/http_dispatcher.py	2026-10-27 21:16:58
++++ Coding/XX-Net-5.16.7.1/code/default/lib/noarch/front_base/http_dispatcher.py	2026-10-29 21:12:21
+@@ -334,7 +334,15 @@
+ 
+             self.logger.debug("remove_slowest_worker remove %s", slowest_worker.ip_str)
+             self.close_cb(slowest_worker)
++
++    def _task_log_key(self, task):
++        endpoint = utils.to_bytes(task.path).split(b"?", 1)[0]
++        front = getattr(task.worker, "ip_str", None)
++        return task.method, task.host, endpoint, front
+ 
++    def _task_log_allowed(self, task):
++        return self.retry_log_throttle.allow(self._task_log_key(task))
++
+     def request(self, method, host, path, headers, body, url=b"", timeout=60):
+         method = utils.to_bytes(method)
+         host = utils.to_bytes(host)
+@@ -374,10 +382,13 @@
+                 self.continue_fail_num = 0
+                 task.worker.continue_fail_tasks = 0
+             else:
+-                if not response:
+-                    self.logger.warn("task %s %s %s timeout", method, host, path)
+-                else:
+-                    self.logger.warn("task %s %s %s status:%d", method, host, path, response.status)
++                allowed, suppressed = self._task_log_allowed(task)
++                if allowed:
++                    suffix = " (suppressed %d)" % suppressed if suppressed else ""
++                    if not response:
++                        self.logger.warn("task %s %s %s timeout%s", method, host, path, suffix)
++                    else:
++                        self.logger.warn("task %s %s %s status:%d%s", method, host, path, response.status, suffix)
+ 
+                 self.fail_num += 1
+                 self.continue_fail_num += 1
+@@ -404,11 +415,9 @@
+         self.fail_num += 1
+         self.continue_fail_num += 1
+         self.last_fail_time = time.time()
+-        # (F-phase 2026-10-27) log line only; retry state machine below is
+-        # untouched. First hit logs immediately, window hits are counted and
+-        # reported on the next allowed line. Keyed by url: one line per url
+-        # per minute still shows the failing endpoint.
+-        allowed, suppressed = self.retry_log_throttle.allow(task.url)
++        # (I 阶段 2026-10-29) 按 front+endpoint 聚合，避免递增 tid 绕过节流；
++        # 放行行仍保留完整 URL 与 trace。重试状态机不变。
++        allowed, suppressed = self._task_log_allowed(task)
+         if allowed:
+             if suppressed:
+                 self.logger.warn("retry_task_cb: %s, trace:%s (suppressed %d)",

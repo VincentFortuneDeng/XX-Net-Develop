@@ -707,16 +707,16 @@ H 阶段代码与测试完成时仅落盘仓库快照，尚未影响当时运行
 - 独立全量审查首次因 API 限流中断，接续后完成。无 Critical；两项 Important 均经最小真实路径复现并在一轮修复中完成：R9 证明旧实现遇到非 UTF-8 path 时重试次数为 0、响应变 `None`，改用 bytes key 后重试/响应/fail/notify 全部保持；X8 证明 reset 后旧响应会与新 session 同 transfer 错账，改用请求捕获的 session 后两类状态 WARN 各自放行。两项均先 RED 后 GREEN，随后完整回归再次全部通过。
 - Minor 延后：非 200 roundtrip 原格式串末尾已有空格，suppressed 结算行会出现双空格；不影响语义，本轮不做格式润色。明确排除的微旱态、生产容量、完整 episode、全局 ERROR 限流、其他 front timeout 和既有传输并发设计均不在本轮扩展实施。
 ## 生效边界
-I 阶段仅落盘仓库快照，当前 `/Applications/XX-Net` 运行进程仍是 H 代码；未部署、未重启、未 push。上述结果均为离线测试证据，生产收敛幅度需在用户另行确认部署并重启后审计。
-## 后续部署验证清单（用户决定于 2026-10-29 暂缓部署）
-- **部署前**：确认待覆盖文件仅为 `http_dispatcher.py`、`proxy_session.py`、`front_dispatcher.py`；按既有模式保存 `.orig`/`.diff`，rsync 后逐文件 diff 与 SHA-256 校验。不得以当前 H 运行日志评估 I 疗效。
-- **重启确认**：由用户决定并执行重启；记录新 PID、启动时间和 8086 监听状态，确认启动晚于部署，并做代理 204 回归与新增 ERROR 检查。
+I 阶段代码于 2026-10-29 完成，2026-10-31 已与 J 一并部署到 `/Applications/XX-Net`，并由用户重启加载（PID 24668，18:16:13）。部署前的结果均为离线测试证据；重启初审与后续疗效观察见下文。
+## 重启验证清单（2026-10-31 已部署并重启）
+- **部署记录**：I 三个生产文件与 J 的 `base_container.py` 已按既有模式保存 `.orig`/`.diff` 到 `backups/pre-rsync-20261031-ij/`，rsync 后逐文件 cmp 与 SHA-256 校验一致。不得以重启前的 H 运行日志评估 I/J 疗效。
+- **重启确认**：已记录新 PID、启动时间、8086 监听、BoringSSL 与两次代理 204；除下述 Smart Router 启动竞态外无新增 ERROR。
 - **dispatcher 疗效**：在可比的故障窗口统计 `retry_task_cb`、task timeout/status。相同 front/host/endpoint 的不同 tid 应聚为每 60 秒一条，下一窗放行附 suppressed，完整 URL/tid 与 trace 仍在；不同 front/host/endpoint 应独立。没有对应故障时只记“未触发”。
 - **x_tunnel 疗效**：核对 ack timeout、retry、非 200 roundtrip、最终 failed 四类日志按 `(session_id, transfer_no, kind)` 收敛；不同 transfer/kind 不错并。若发生 reset，检查旧 session 的延迟响应不与新 session 同号 transfer 错账。`front retry` 同 tid 应聚合、不同 tid 应独立。
 - **行为回归**：观察正常上下行、重试与恢复，确认无新增传输异常、响应丢失或连接停滞；日志 suppressed 不代表事件被丢弃。离线已验证 Queue/notify/状态路径，现场仍需核对代理可用性。
 - **收尾**：比较重启前后同长度、同类故障窗口的 WARN 数量并保留样例；更新本文件与 `LOCAL-VERSION.md` 后再决定是否进入后续日志治理。DNS 继续只在实际出现 EHOSTUNREACH/ENETUNREACH 时核对 H 退避，未触发不宣称疗效。
 
-# J 阶段：x_tunnel 下载 SN 重复超时日志聚合（2026-10-29，未部署）
+# J 阶段：x_tunnel 下载 SN 重复超时日志聚合（2026-10-29 实施，2026-10-31 已部署并重启）
 ## 复评与范围
 - 用户决定暂缓 I 部署，并要求记录后续验证、继续下一优先级。H 运行窗口 `2026-10-29 19:21:27–21:08:42` 中，`mark_sn_timeout` 首报 363 条、renew 379 条，共 742 条、363 个不同 SN；同 SN 最多重复 6 次。它是 I 未覆盖的最大剩余 x_tunnel 日志簇。
 - `req get response timeout` 在 cloudflare/tls_relay 共 121 条，与同数量 task timeout 及 I 的 dispatcher/retry 故障链同源，留待 I 部署审计后复评，不在 J 重复治理。微旱态、公共容量、完整 episode 仍不扩展。
@@ -729,5 +729,24 @@ I 阶段仅落盘仓库快照，当前 `/Applications/XX-Net` 运行进程仍是
 - 独立审查发现两项 Important，均在同一轮修复：① 静默重复/旧 t 事件无条件 `allow(sn)`，会虚增 suppressed 并消费跨窗放行；M7 先 RED，再将 `allow()` 移入两个实际日志分支至 GREEN。② reset 清空 SN 状态与替换账本非原子，mark 可在中间使用旧窗口并吞掉新生命周期首报；M8 以可控交错复现 `old_allow=True`，随后 reset 加同一把锁至 GREEN，复验为 `old_allow=False`。无 Critical、Minor 或待裁定项。
 - 最终完整回归：J **8/8**、I dispatcher 9/9、I x_tunnel 8/8、综合节流 33/33、DNS 9/9，五套既有回归全部通过，fd 探针 **A(detached)**，生产文件 `py_compile` 与 `git diff --check` 通过。
 ## 后续验证与边界
-- J 未部署、未重启、未 push，当前生产仍是 H 代码。若后续 I+J 一起部署，除 I 清单三个文件外还需覆盖并校验 `base_container.py`，覆盖前同样备份。
+- J 已于 2026-10-31 与 I 一并部署并由用户重启加载。部署覆盖 I 三个生产文件及 J 的 `base_container.py`，覆盖前备份位于 `backups/pre-rsync-20261031-ij/`。
 - 重启后按相同故障窗口比较：不同 SN 首报不得减少，同 SN 60 秒内 renew 应收敛并在下一窗附 suppressed；若发生 reset，同号 SN 应重新首报。没有对应事件只记未触发，不把零日志当疗效。
+
+## I/J 重启后初次审计（2026-10-31）
+- 用户重启后 launcher PID 24668，启动时间 `2026-10-31 18:16:13`，晚于四文件部署；8086 正常 LISTEN，启动日志确认 `TLS implementation: BoringSSL`。两次代理 `generate_204` 分别约 0.465s、0.486s，均返回 204。
+- 初审窗口内 x_tunnel/cloudflare/tls_relay warning 零新增；seley 仅两条不同 IP 的 `_connect_ssl` handshake 首报。dispatcher retry/timeout/status、transfer、front retry、roundtrip、`mark_sn_timeout` 均未触发，因此只确认新代码已随进程加载，不能宣称 I/J 生产收敛疗效。
+- smart_router 在 `18:16:13.364` 出现一条 `NoneType.query_recursively` ERROR。堆栈与源码确认是既有启动顺序竞态：`local/__init__.py` 在 152 行先启动 proxy_server，164 行才给 `g.dns_query` 赋值，启动瞬间请求可落入中间窗口。I/J 未修改 smart_router 或该初始化路径，本条与本次四文件无关；后续可单独按 RED→GREEN 修复初始化顺序或增加未就绪保护。
+- 后续 `18:19:51–18:21:14` 出现首批 I 目标首报：transfer 102/114 的 roundtrip status、final failed、retry、ack timeout 按不同 kind/transfer 各自放行，front retry tid=114 首报保留；seley 的 status 与 retry 样例相隔约 81 秒。窗口内没有同 key 重复事件，因此没有 suppressed 属预期，尚不能据此测量收敛比例。J 的 `mark_sn_timeout` 仍未触发；除启动竞态外未出现新增 ERROR。
+
+# K 阶段：Smart Router DNS 初始化启动竞态（2026-10-31，未部署）
+## 根因与最小修复
+- 生产堆栈为 proxy_handler → smart_route `g.dns_query.query_recursively()`，在重启首秒得到 None。真实 `start()` 的顺序是先 `proxy_server.start()`，再执行 `get_local_ips()` 与 `CombineDnsQuery()`，代理线程可在 DNS 对象赋值前受理请求。
+- 独立审查补充发现同类 Important：SOCKS5 UDP ASSOCIATE 会在代理启动后、DNS 服务启动前读取 `g.dns_srv.udp_relay_port`。因此将 DNS 地址计算、`g.dns_srv` 构造与 `start()` 也前移到代理 `start()` 之前，并把代理监听地址改用独立变量，避免与 DNS 地址日志混用。
+- 最终只调整启动顺序：`g.local_ips` → `g.dns_query` → `g.dns_srv` → `g.proxy_server`。`local_ips` 是 LocalDnsQuery 的前置依赖，必须先初始化；其余配置、PipeSocks、端口参数和 DNS/代理业务逻辑不变，不增加未就绪分支。
+## TDD、审查与验证
+- 新增 `tests/test_smart_router_startup_race.py`：加载真实 `start()`，仅在 HTTPServer.start 的网络边界模拟“启动即收到域名请求/UDP ASSOCIATE”，真实启动顺序必须让请求看到已初始化的 DNS 对象和 UDP 中继端口。
+- **S1 RED**：旧实现稳定复现 `AttributeError("'NoneType' object has no attribute 'query_recursively'")`；前移 DNS 查询对象后 GREEN。**S2 RED**：仅前移查询对象时复现 `AttributeError("'NoneType' object has no attribute 'udp_relay_port'")`；再前移 DNS 服务后 GREEN。最终 S1/S2 通过，ready=True，目标文件 py_compile 通过。
+- 独立审查无 Critical；唯一 Important 的 UDP ASSOCIATE 窗口已按 S2 RED→GREEN 修复，未做第二轮审查。两项 Minor 延后：代理绑定失败时，提前创建的 DNS 资源需要进程退出回收（原启动失败语义亦未提供完整清理）；测试的进程内 `sys.modules` 替身在与其他 pytest 用例同进程运行时应恢复（当前脚本独立执行）。
+- 最终完整回归：S1/S2、J 8/8、I dispatcher 9/9、I x_tunnel 8/8、综合节流 33/33、DNS 9/9，五套既有回归及 fd 探针全部通过，`git diff --check` 通过。
+## 生效边界
+- K 仅落盘仓库快照，未部署、未重启、未 push；当前运行进程仍是原初始化顺序。部署后仍需用户重启，并观察启动首秒不再出现 `NoneType.query_recursively`，同时确认 8086、DNS 与代理 204 正常。

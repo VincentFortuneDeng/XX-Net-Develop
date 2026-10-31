@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XX-Net 修改与日志治理总结｜2026-10-26 以来</title>
+<style>
+:root{--bg:#f4f6f8;--paper:#fff;--ink:#17202a;--muted:#5c6875;--line:#dce2e8;--blue:#1769aa;--blue-bg:#eaf3fb;--green:#18734b;--green-bg:#eaf7f0;--amber:#8a5500;--amber-bg:#fff5df;--red:#a33a35;--red-bg:#fff0ee;--violet:#6550a4;--violet-bg:#f2eefb;--code:#f2f4f6;--sidebar:250px}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}.layout{display:grid;grid-template-columns:var(--sidebar) minmax(0,1fr);max-width:1540px;margin:auto}.sidebar{position:sticky;top:0;height:100vh;padding:28px 20px;overflow:auto;border-right:1px solid var(--line);background:#eef1f4}.brand{font-weight:750;font-size:17px;line-height:1.45;margin-bottom:6px}.side-note{font-size:12px;color:var(--muted);margin-bottom:20px}.sidebar nav a{display:block;color:#3f4a56;padding:6px 9px;border-radius:6px;font-size:13px}.sidebar nav a:hover{background:#fff;text-decoration:none}.sidebar nav .sub{padding-left:21px;font-size:12px}.main{min-width:0;padding:42px 48px 80px}.hero,.section{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:30px 34px;margin-bottom:24px;box-shadow:0 2px 10px rgba(20,35,50,.025)}h1{font-size:30px;line-height:1.35;margin:0 0 12px;letter-spacing:-.02em}h2{font-size:23px;line-height:1.4;margin:0 0 18px}h3{font-size:18px;margin:26px 0 10px}h4{font-size:15px;margin:18px 0 7px}p{margin:8px 0}.lead{font-size:16px;color:#3c4956;max-width:980px}.meta{color:var(--muted);font-size:13px}.badges{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0}.badge,.tag{display:inline-block;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:650;white-space:nowrap}.deployed{background:var(--green-bg);color:var(--green)}.pending{background:var(--amber-bg);color:var(--amber)}.baseline{background:#edf0f3;color:#4e5c69}.behavior{background:var(--red-bg);color:var(--red)}.logonly{background:var(--blue-bg);color:var(--blue)}.mechanism{background:var(--violet-bg);color:var(--violet)}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:20px}.summary-box{border:1px solid var(--line);border-radius:9px;padding:14px 16px;background:#fafbfc}.summary-box strong{display:block;font-size:14px;margin-bottom:3px}.summary-box span{color:var(--muted);font-size:13px}.callout{border-left:4px solid var(--blue);background:var(--blue-bg);padding:13px 17px;border-radius:0 8px 8px 0;margin:16px 0}.callout.warn{border-color:#d28a18;background:var(--amber-bg)}.callout.good{border-color:var(--green);background:var(--green-bg)}.callout strong{font-weight:700}.toc-note{font-size:13px;color:var(--muted)}code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:.9em;background:var(--code);border-radius:4px;padding:2px 5px;overflow-wrap:anywhere}pre{background:#17202a;color:#e9eef3;padding:17px 20px;border-radius:8px;overflow:auto;font:12.5px/1.7 "SFMono-Regular",Consolas,monospace}pre code{background:none;padding:0;color:inherit}.path{font-family:"SFMono-Regular",Consolas,monospace;font-size:12px;color:#44515e;overflow-wrap:anywhere}.flow{display:flex;align-items:stretch;gap:8px;overflow:auto;padding:8px 0 14px}.flow-node{min-width:140px;flex:1;border:1px solid var(--line);border-radius:8px;padding:12px;background:#fafbfc}.flow-node strong{display:block;font-size:13px}.flow-node small{display:block;color:var(--muted);line-height:1.5;margin-top:4px}.arrow{align-self:center;color:#82909d;font-size:20px}.layer-map{display:grid;gap:9px}.layer{display:grid;grid-template-columns:145px minmax(0,1fr) 190px;gap:14px;align-items:center;border:1px solid var(--line);border-radius:8px;padding:11px 14px}.layer-name{font-weight:700}.layer-log{font-size:12px;color:var(--violet)}table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px}th,td{text-align:left;vertical-align:top;padding:10px 11px;border-bottom:1px solid var(--line)}th{background:#f4f6f8;font-weight:700}tr:last-child td{border-bottom:0}.table-wrap{overflow:auto}.change{border:1px solid var(--line);border-radius:10px;margin:14px 0;overflow:hidden;background:#fff}.change-head{padding:16px 19px;background:#fafbfc;border-bottom:1px solid var(--line)}.change-head h3{font-size:16px;margin:0 0 6px}.change-body{padding:5px 19px 16px}.logic{display:grid;grid-template-columns:1fr 34px 1fr;gap:10px;align-items:stretch;margin:12px 0}.logic>div:not(.logic-arrow){padding:11px 13px;border:1px solid var(--line);border-radius:7px;background:#fafbfc}.logic-arrow{display:flex;align-items:center;justify-content:center;color:var(--blue);font-size:21px}.logic strong{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}.fields{display:grid;grid-template-columns:110px minmax(0,1fr);gap:4px 12px;font-size:13px;margin:10px 0}.fields dt{font-weight:700;color:#4b5865}.fields dd{margin:0}.risk{font-size:13px;color:#6c4a16;background:#fff9ed;border-radius:6px;padding:9px 12px;margin-top:10px}.ok{font-size:13px;color:var(--green);background:var(--green-bg);border-radius:6px;padding:9px 12px;margin-top:10px}.filters{display:flex;gap:8px;flex-wrap:wrap;position:sticky;top:0;z-index:3;background:var(--paper);padding:8px 0 12px}.filter-btn{border:1px solid var(--line);background:#fff;color:#3d4955;border-radius:999px;padding:5px 13px;cursor:pointer;font:inherit;font-size:12px}.filter-btn.active{background:var(--ink);color:#fff;border-color:var(--ink)}.hidden-by-filter{display:none!important}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px}.mini-card{border:1px solid var(--line);border-radius:8px;padding:15px 17px}.mini-card h3{font-size:15px;margin:0 0 7px}.checklist{padding-left:22px}.checklist li{margin:5px 0}.timeline{border-left:2px solid #cbd5de;margin-left:8px;padding-left:22px}.timeline-item{position:relative;margin-bottom:18px}.timeline-item:before{content:"";position:absolute;left:-29px;top:7px;width:10px;height:10px;border-radius:50%;background:var(--blue);border:2px solid #fff}.timeline-item strong{display:block}.small{font-size:13px;color:var(--muted)}.footer{color:var(--muted);font-size:12px;text-align:center;padding:10px}.nowrap{white-space:nowrap}
+@media(max-width:1050px){.layout{grid-template-columns:1fr}.sidebar{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--line);padding:16px 24px}.sidebar nav{display:flex;flex-wrap:wrap;gap:2px}.sidebar nav .sub{padding-left:9px}.side-note{margin-bottom:8px}.main{padding:24px}.summary-grid{grid-template-columns:1fr}.layer{grid-template-columns:120px 1fr}.layer-log{grid-column:2}.two-col{grid-template-columns:1fr}}
+@media(max-width:640px){.main{padding:14px}.hero,.section{padding:22px 18px}h1{font-size:25px}.logic{grid-template-columns:1fr}.logic-arrow{transform:rotate(90deg);height:24px}.fields{grid-template-columns:1fr}.fields dd{margin-bottom:7px}.layer{grid-template-columns:1fr}.layer-log{grid-column:1}.change-body{padding:5px 14px 14px}}
+@media print{body{background:#fff;font-size:11px}.layout{display:block}.sidebar,.filters{display:none}.main{padding:0}.hero,.section{box-shadow:none;border:0;border-bottom:1px solid #bbb;border-radius:0;padding:18px 0;margin:0;break-inside:auto}.change{break-inside:avoid}.badge,.tag{border:1px solid #ccc}a{color:inherit}.flow{overflow:visible}.flow-node{min-width:0}.main{max-width:none}}
+</style>
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">XX-Net 修改与日志治理</div>
+  <div class="side-note">2026-10-26 以来<br>代码基线：J 阶段 commit 735a73c</div>
+  <nav aria-label="目录">
+    <a href="#reading">1. 先看结论</a>
+    <a href="#status">2. 部署状态与时间线</a>
+    <a href="#architecture">3. 分层与日志地图</a>
+    <a href="#throttle">4. 日志节流核心逻辑</a>
+    <a href="#changes">5. 全部修改明细</a>
+    <a class="sub" href="#platform">5.1 平台与 Web 控制层</a>
+    <a class="sub" href="#dns">5.2 Smart Router / DNS</a>
+    <a class="sub" href="#front">5.3 前端池与公共传输</a>
+    <a class="sub" href="#xtunnel">5.4 X-Tunnel 会话与接收</a>
+    <a href="#audit">6. 逻辑审查重点</a>
+    <a href="#evidence">7. 验证证据与未做事项</a>
+    <a href="#files">8. 文件索引</a>
+  </nav>
+</aside>
+<main class="main">
+<section class="hero" id="reading">
+  <div class="meta">XX-Net 5.16.7.1 本地补丁线 · 面向逻辑审查的完整总结</div>
+  <h1>从程序修复到日志治理：<br>改了什么，在哪一层，影响什么</h1>
+  <p class="lead">本文覆盖 2026-10-26 以来完成的程序错误修复、网络路径调整、日志降噪与节流，以及为理解当前系统所必需的既有本地基线。重点不是罗列提交，而是展示每项修改的输入、判断、状态、输出和边界。</p>
+  <div class="badges">
+    <span class="badge deployed">I/J 已部署并随新进程加载</span>
+    <span class="badge pending">首批首报已出现，疗效待观察</span>
+    <span class="badge pending">K 已修复，尚未部署</span>
+    <span class="badge mechanism">独立 HTML · 无外部依赖</span>
+  </div>
+  <div class="summary-grid">
+    <div class="summary-box"><strong>程序行为修复</strong><span>socket 生命周期、DNS 选择、IPv6 过滤、selector 竞态、Web 轮询、平台兼容性。</span></div>
+    <div class="summary-box"><strong>纯日志治理</strong><span>多数 F–J 修改只决定是否写日志，不丢弃异常、响应、重试或传输事件。</span></div>
+    <div class="summary-box"><strong>证据必须分开看</strong><span>I/J 已重启并出现首批独立首报，但尚无同 key 同窗聚合样例；不能把零 suppressed 或离线测试当作生产疗效。</span></div>
+  </div>
+  <div class="callout"><strong>最重要的阅读原则：</strong>日志中的 <code>suppressed N</code> 表示“有 N 条同类日志没有展开打印”，<strong>不表示 N 个网络事件被丢弃</strong>。但 DNS 退避和 IPv6 过滤是例外：它们确实会改变后续连接或 nameserver 的选择。</div>
+</section>
+
+<section class="section" id="status">
+<h2>2. 部署状态与时间线</h2>
+<div class="two-col">
+  <div class="mini-card">
+    <h3><span class="tag deployed">已部署并有生产证据</span></h3>
+    <p>10-26 根修与四项修复、B1–B6、E、F、G、H。最后记录的新进程为 <strong>PID 2066，2026-10-29 19:00:28 启动</strong>。</p>
+    <p class="small">这里表示“修复记录中最后一次已验证的生产状态”，不是本 HTML 生成时重新探测的实时进程状态。</p>
+  </div>
+  <div class="mini-card">
+    <h3><span class="tag pending">已部署 / 已重启初审</span></h3>
+    <p><strong>I：</strong>dispatcher、x_tunnel transfer、front retry 聚合。</p>
+    <p><strong>J：</strong>下载 SN 超时日志聚合。</p>
+    <p class="small">2026-10-31 18:16:13 新进程 PID 24668 已加载；两次代理 204。首批 I 独立首报符合设计，尚无同 key 同窗重复；J 未触发，暂不能评估收敛幅度。</p>
+  </div>
+</div>
+<div class="timeline" style="margin-top:24px">
+  <div class="timeline-item"><strong>10-26 · 根修与程序纠错</strong><span class="small">按模块启用状态停止无效轮询；修复 DoT、selector、IPv6 和 send-block 日志问题；B1–B6 加固边界。</span></div>
+  <div class="timeline-item"><strong>10-27 · E：DNS nameserver 过滤</strong><span class="small">在 DNS 服务器加载入口过滤不可用的 link-local/ULA/loopback/multicast 地址。</span></div>
+  <div class="timeline-item"><strong>10-27～28 · F：建立公共日志治理机制</strong><span class="small">warning_log 10MB 单代滚动、通用 LogThrottle、reserved/frag 降级、no-IP/retry/HEAD 首轮节流；历史日志归档止损。</span></div>
+  <div class="timeline-item"><strong>10-28 · G：尾账闭环</strong><span class="small">no-IP 增加恢复结算；HEAD 从按 worker 改为按前端 IP，三条失败出口统一。</span></div>
+  <div class="timeline-item"><strong>10-29 · H：语义修正与行为型退避</strong><span class="small">no-IP total 改为总事件数；_connect_ssl 按 IP+异常类别聚合；DNS 对路由不可达做 60 秒退避。</span></div>
+  <div class="timeline-item"><strong>10-29 · I：修正聚合维度</strong><span class="small">去掉 dispatcher key 中会变化的 tid；x_tunnel 按事件所属 session/transfer/kind 聚合。已部署并重启，首批首报已出现。</span></div>
+  <div class="timeline-item"><strong>10-29 · J：下载接收池日志</strong><span class="small">按 SN 聚合 mark_sn_timeout；reset 同步重置账本并保证并发原子性。已部署并重启，首批首报已出现。</span></div>
+  <div class="timeline-item"><strong>10-31 · K：Smart Router 启动竞态</strong><span class="small">DNS 查询对象、DNS 服务与 UDP 中继均前移到代理启动之前；S1/S2 RED→GREEN，仓库已修，尚未部署。</span></div>
+</div>
+</section>
+
+<section class="section" id="architecture">
+<h2>3. 分层架构与日志操作地图</h2>
+<p>下面按真实职责分层。蓝色/紫色文字表示该层存在显式日志操作；“上游网络”不是本地可修复的代码层。</p>
+<div class="flow" aria-label="请求路径概览">
+  <div class="flow-node"><strong>浏览器 / 客户端</strong><small>Web UI 状态轮询、代理请求</small></div><div class="arrow">→</div>
+  <div class="flow-node"><strong>Launcher / Web</strong><small>配置、状态、诊断收集</small></div><div class="arrow">→</div>
+  <div class="flow-node"><strong>Smart Router</strong><small>DNS、socket 转发、selector</small></div><div class="arrow">→</div>
+  <div class="flow-node"><strong>X-Tunnel / Front</strong><small>会话、调度、建连、重试</small></div><div class="arrow">→</div>
+  <div class="flow-node"><strong>远端服务</strong><small>front、relay、DNS、目标站点</small></div>
+</div>
+<div class="layer-map">
+  <div class="layer"><div class="layer-name">平台与启动层</div><div><code>start</code>、ARM64 BoringSSL、macOS 托盘与 helper、语言资源</div><div class="layer-log">启动提示；运行 TLS 实现日志</div></div>
+  <div class="layer"><div class="layer-name">Launcher / Web</div><div><code>web_control.py</code>、<code>status.html</code>、<code>upload_logs.py</code></div><div class="layer-log">no module WARN→DEBUG；debug 异常；404 轮询根修</div></div>
+  <div class="layer"><div class="layer-name">公共日志设施</div><div><code>lib/noarch/xlog.py</code>：buffer、warning_log、滚动、<code>LogThrottle</code></div><div class="layer-log">所有模块日志的最终写入与滚动</div></div>
+  <div class="layer"><div class="layer-name">DNS / Smart Router</div><div><code>dns_query.py</code>、<code>dns_server.py</code>、<code>pipe_socks.py</code></div><div class="layer-log">DNS WARN/DEBUG/INFO；包字段 DEBUG；send-block WARN</div></div>
+  <div class="layer"><div class="layer-name">Front 资源池</div><div><code>ip_manager.py</code>、<code>connect_manager.py</code></div><div class="layer-log">IPv6 skip INFO；no-IP WARN/recovered；connect_ssl WARN</div></div>
+  <div class="layer"><div class="layer-name">HTTP 调度与连接</div><div><code>http_dispatcher.py</code>、<code>http1.py</code>；cloudflare / seley / tls_relay 共用</div><div class="layer-log">retry/timeout/status；HEAD WARN+trace</div></div>
+  <div class="layer"><div class="layer-name">X-Tunnel 会话层</div><div><code>proxy_session.py</code>、<code>front_dispatcher.py</code></div><div class="layer-log">ack/retry/roundtrip/failed/front retry</div></div>
+  <div class="layer"><div class="layer-name">下载接收层</div><div><code>base_container.py / BlockReceivePool</code></div><div class="layer-log">mark_sn_timeout 首报与 renew</div></div>
+</div>
+<div class="callout warn"><strong>同一故障会跨层重复出现：</strong>例如坏前端可先产生 <code>_connect_ssl</code>，随后出现 <code>retry_task_cb</code> / task timeout，再向上形成 x_tunnel 的 <code>front retry</code>、roundtrip failed。它们是同一故障链的不同视角，不应把每一层都简单压成一条全局日志。</div>
+</section>
+
+<section class="section" id="throttle">
+<h2>4. 日志节流的核心逻辑</h2>
+<h3>4.1 通用 <code>LogThrottle(60)</code>：按 key 的固定窗口闸门</h3>
+<pre><code>事件到达 + key
+   │
+   ├─ 该 key 当前没有有效窗口 ─→ 放行首条 WARN，建立 60 秒窗口
+   │
+   ├─ 窗口内再次到达 ─────────→ 不写 WARN；suppressed += 1；业务照常执行
+   │
+   └─ 下一窗口事件到达 ───────→ 放行一条，附上一窗 (suppressed N)，开始新窗口</code></pre>
+<dl class="fields">
+  <dt>保留什么</dt><dd>每个 key 的首条信号、下一窗口的数量结算；放行行保留原始字段。</dd>
+  <dt>不保留什么</dt><dd>窗口内重复事件的逐条文本；如果 key 永久沉默，最后一个窗口的 suppressed 只随内存账本消失。</dd>
+  <dt>容量语义</dt><dd>超过 512 个 key 会触发剪枝，但只删除过期 key；活跃 key 可以超过 512，并非硬上限。</dd>
+  <dt>线程语义</dt><dd>类内部带锁；调用方仍需保证“日志账本”和“业务状态”的生命周期一致，J 的 reset 修复正是这个问题。</dd>
+</dl>
+<div class="risk"><strong>逻辑边界：</strong>会存在“条件性尾账未落盘”：某 key 在当前窗口已有 suppressed，之后没有下一放行事件，随后 key 过期被剪枝、对象 reset 或进程退出，最后这段计数就会消失。适用于 HEAD、dispatcher、_connect_ssl，以及部署后的 transfer、front retry 和 SN 聚合。丢失的只是最后窗口的数量注解；首报及此前放行行已落盘。被抑制事件的原文没有缓存，因此不能事后补列。G 阶段明确未实施后台脉冲结算。</div>
+
+<h3>4.2 并非所有限流都使用 LogThrottle</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>机制 / 位置</th><th>键与窗口</th><th>结算方式</th><th>是否影响业务</th></tr></thead>
+<tbody>
+<tr><td>send-block / pipe_socks</td><td><code>id(socket)</code>，1 秒</td><td>下一放行附 suppressed；socket close 时 final 清账</td><td><span class="tag logonly">仅日志</span></td></tr>
+<tr><td>no-IP / connect_manager</td><td>每个 ConnectManager 一套旱态账本，60 秒</td><td>放行附上一窗；恢复时补尾窗和 total</td><td><span class="tag logonly">仅新增日志</span><br><code>no_ip_time</code> 原功能未改</td></tr>
+<tr><td>IPv6 skip / ip_manager</td><td>探测周期 300 秒</td><td>每个周期按实际 skip 数写 INFO，无 suppressed 账本</td><td><span class="tag behavior">会过滤前端</span></td></tr>
+<tr><td>DNS backoff / dns_query</td><td>nameserver，60 秒</td><td>发送成功清账；到期重试；全冷却单点 fail-open</td><td><span class="tag behavior">会改变 DNS 选择</span></td></tr>
+<tr><td>通用 LogThrottle</td><td>调用方定义 key，通常 60 秒</td><td>下一窗口附 suppressed，无对象销毁结算</td><td><span class="tag logonly">仅日志</span></td></tr>
+<tr><td>warning_log 滚动</td><td>单文件 10MB</td><td>当前文件→<code>.1</code>，只保留一代</td><td><span class="tag mechanism">日志存储行为</span></td></tr>
+</tbody></table></div>
+</section>
+
+<section class="section" id="changes">
+<h2>5. 全部修改明细</h2>
+<p class="toc-note">可用按钮筛选。每张卡片都区分“修改逻辑”和“逻辑边界”，便于判断是否会掩盖故障或改变网络行为。</p>
+<div class="filters" role="group" aria-label="筛选修改">
+  <button class="filter-btn active" data-filter="all">全部</button>
+  <button class="filter-btn" data-filter="behavior">改变程序行为</button>
+  <button class="filter-btn" data-filter="logonly">仅日志 / 存储</button>
+  <button class="filter-btn" data-filter="pending">待疗效 / 未部署</button>
+</div>
+
+<h3 id="platform">5.1 平台、启动与 Web 控制层</h3>
+<article class="change" data-kind="behavior baseline">
+<div class="change-head"><h3>既有基线：ARM64 原生 BoringSSL、macOS 托盘与中文资源</h3><span class="tag baseline">理解当前系统所需基线</span> <span class="tag behavior">行为 / 平台</span></div>
+<div class="change-body">
+<p>这些改动构成 10-26 后续工作的运行基础，而非 F–J 日志节流的一部分。</p>
+<dl class="fields"><dt>BoringSSL</dt><dd>按 pyBoringSSL / boringssl / brotli 固定 commit 构建 ARM64 <code>boringssl.abi3.so</code>，避免使用系统 LibreSSL；符号与 TLS 指纹经过对照验证。</dd><dt>macOS 托盘</dt><dd>独立导入 <code>objc</code>，修正 PyObjC 11 装饰器；setupHelper 改守护线程并调用 finishLaunching；helper 使用持久路径与权限检查，避免每次重启重复授权。</dd><dt>中文界面</dt><dd>补 launcher / smart_router 翻译，status.html 系统信息标签加入 i18n。</dd></dl>
+<div class="risk">历史文档中的 Rosetta 方案属于 5.16.6 时代；当前 5.16.7.1 使用 ARM64 原生 abi3 库，不应把两套方案混用。</div>
+</div></article>
+
+<article class="change" data-kind="behavior baseline">
+<div class="change-head"><h3>启动提示与依赖安装：先看真实能力，再决定提示</h3><span class="tag deployed">已部署</span> <span class="tag behavior">启动行为</span></div>
+<div class="change-body"><div class="path">start</div>
+<div class="logic"><div><strong>修改前</strong>没有内嵌 python3/ 就无条件宣称退回 system SSL；缺依赖直接 sudo pip。</div><div class="logic-arrow">→</div><div><strong>修改后</strong>实际尝试 import boringssl；abi3 可加载就提示可用。PyObjC/Pillow 先试用户级 pip，并兼容 PEP 668。</div></div>
+<div class="ok">验证记录：启动输出与运行日志均确认 BoringSSL，代理 generate_204 返回 204。</div>
+</div></article>
+
+<article class="change" data-kind="behavior logonly">
+<div class="change-head"><h3>Web 控制：debug 竞态修复与 no-module 降噪</h3><span class="tag deployed">已部署</span> <span class="tag behavior">错误修复</span> <span class="tag logonly">日志级别</span></div>
+<div class="change-body"><div class="path">code/default/launcher/web_control.py</div>
+<dl class="fields"><dt>竞态根因</dt><dd><code>sys._current_frames()[thread.ident]</code> 在枚举线程与取帧之间，目标线程可能已退出，产生 KeyError。</dd><dt>修复逻辑</dt><dd>先取得 frames 快照，再用 <code>.get()</code>；没有对应帧就跳过。两处未启用模块的 <code>no module in path</code> 从 WARN 降为 DEBUG。</dd><dt>日志位置</dt><dd>Launcher Web 请求路由与 /debug 页面；模块未启用仍返回 404，只是不再把正常状态当 WARN。</dd></dl>
+</div></article>
+
+<article class="change" data-kind="behavior">
+<div class="change-head"><h3>无效 404 轮询根修：调用方先检查模块是否启用</h3><span class="tag deployed">已部署</span> <span class="tag behavior">请求行为</span></div>
+<div class="change-body"><div class="path">x_tunnel/local/upload_logs.py · launcher/web_ui/status.html</div>
+<div class="logic"><div><strong>修改前</strong>诊断收集器硬编码请求所有模块；状态页每秒请求 gae_proxy，即使模块未启用。</div><div class="logic-arrow">→</div><div><strong>修改后</strong>先读 <code>/config?cmd=get_config</code>，删除/跳过未启用模块请求；配置读取失败时保留原行为，避免诊断功能整体失效。</div></div>
+<dl class="fields"><dt>保留日志</dt><dd>web_control 的 DEBUG 仍作为纵深防御；真正未知路由或启动失败逻辑未改。</dd><dt>已验证</dt><dd>gae_info/gae_log 不再刷新，其他诊断文件正常；重启后无新增 no-module WARN。</dd></dl>
+<div class="risk">页面启用状态是加载时快照，运行中切换模块需刷新；配置请求失败会 fail-open 回到旧轮询，因此 404 仍可能出现。</div>
+</div></article>
+
+<h3 id="dns">5.2 Smart Router / DNS / socket 转发</h3>
+<article class="change" data-kind="behavior pending">
+<div class="change-head"><h3>K：代理启动前，先让 DNS 查询与 UDP 中继全部就绪</h3><span class="tag pending">仓库已修 · 未部署</span> <span class="tag behavior">启动顺序 / 错误修复</span></div>
+<div class="change-body"><div class="path">smart_router/local/__init__.py · start</div>
+<div class="logic"><div><strong>修改前</strong><code>proxy_server.start()</code> 先让代理线程接请求，随后才初始化 <code>g.dns_query</code> 和 <code>g.dns_srv</code>；启动首请求可能访问 None。</div><div class="logic-arrow">→</div><div><strong>修改后</strong>初始化顺序为 <code>g.local_ips → g.dns_query → g.dns_srv → g.proxy_server</code>，代理可见前 DNS 查询、DNS 服务和 UDP 中继端口均已就绪。</div></div>
+<dl class="fields"><dt>覆盖路径</dt><dd>S1 覆盖域名代理的 <code>query_recursively</code>；S2 覆盖 SOCKS5 UDP ASSOCIATE 的 <code>udp_relay_port</code>，两者均在旧顺序按目标 RED、最终 GREEN。</dd><dt>业务边界</dt><dd>只调整初始化顺序并分离代理/DNS 地址变量；不改 DNS 查询、代理转发、端口参数或 I/J 逻辑。</dd><dt>审查</dt><dd>独立审查发现 S2 的 Important 后已修复；完整回归通过。代理绑定失败时的 DNS 资源清理、测试 sys.modules 恢复两项 Minor 延后。</dd></dl>
+<div class="risk">当前只存在仓库快照，未部署到 /Applications/XX-Net，运行进程仍有原竞态；需要另行部署并重启后才能做生产验证。</div>
+</div></article>
+
+<article class="change" data-kind="behavior">
+<div class="change-head"><h3>DoT / DNS over TCP：失败路径不再二次报错或泄漏 fd</h3><span class="tag deployed">已部署</span> <span class="tag behavior">socket 生命周期</span></div>
+<div class="change-body"><div class="path">smart_router/local/dns_query.py · DnsOverTlsQuery / DnsOverTcpQuery</div>
+<dl class="fields"><dt>DoT 判空</dt><dd><code>s=None</code> 初始化；基类 connect 后若无 socket 直接返回 None；异常时关闭半开 socket，消除 NoneType.getsockopt。</dd><dt>基类 direct</dt><dd>异常路径补 close；WARN 原缺少第 4 个 <code>%r</code> 参数，补齐异常对象，避免日志语句自身 TypeError。</dd><dt>代理 connect</dt><dd>connect 失败 close 后原样 re-raise，对外异常语义不变。</dd></dl>
+<div class="ok">实测 wrap_socket 失败后 raw fd 已由 SSL 层关闭，后续 close 是幂等 no-op；测试覆盖三路径与 close 次数。</div>
+</div></article>
+
+<article class="change" data-kind="behavior logonly">
+<div class="change-head"><h3>selector 注册/移除竞态：预期关闭竞态降 DEBUG，未知异常仍报警</h3><span class="tag deployed">已部署</span> <span class="tag behavior">错误处理</span> <span class="tag logonly">日志级别</span></div>
+<div class="change-body"><div class="path">smart_router/local/pipe_socks.py · try_add / try_remove</div>
+<div class="logic"><div><strong>修改前</strong>socket 在预检和 register/unregister 之间关闭，ValueError/KeyError 形成 ERROR。</div><div class="logic-arrow">→</div><div><strong>修改后</strong>register 前检查 fileno；预期的已关闭/重复注册/未注册分别捕获并记 DEBUG；其他 Exception 保留全量告警。</div></div>
+<p>转发缓冲与 selector 的正常路径未改。macOS kqueue 的真实语义也通过探针确认，避免假设所有平台都抛同一种异常。</p>
+</div></article>
+
+<article class="change" data-kind="logonly">
+<div class="change-head"><h3>BlockingIOError：按 socket 每秒聚合，并在 close 结算尾账</h3><span class="tag deployed">已部署</span> <span class="tag logonly">仅日志</span></div>
+<div class="change-body"><div class="path">smart_router/local/pipe_socks.py · warn_send_block / close</div>
+<pre><code>非阻塞 send 缓冲满 → 数据仍进入既有缓冲/重试路径
+                  → warn_send_block(id(socket))
+                     首条立即 WARN；同秒后续只计数
+                     下一秒首条附 suppressed；close 附 final suppressed 并 pop</code></pre>
+<p>split-SNI flush、直发、写循环三个 WARN 点统一走 helper。没有修改 send、缓冲或重试。</p>
+<div class="risk">key 使用 <code>id(s)</code>，对象 GC 后 id 可复用，新连接可能继承极短旧窗口；评估后接受。close 与 warn 同在 pipe 单线程，close 清账避免永久挂账。</div>
+</div></article>
+
+<article class="change" data-kind="behavior logonly">
+<div class="change-head"><h3>E：nameserver 入口过滤；H：路由不可达后的 60 秒退避</h3><span class="tag deployed">已部署</span> <span class="tag behavior">会改变 DNS 服务器选择</span></div>
+<div class="change-body"><div class="path">smart_router/local/dns_query.py · LocalDnsQuery</div>
+<h4>E：加载时过滤</h4><p>拒绝 <code>fe80::/10</code>、<code>fc00::/7</code>、<code>::1</code>、<code>ff00::/8</code> 和 127.0.0.1；保留 IPv4 与全球单播 IPv6。过滤位于公共 DNS 兜底之前，全部被滤空时进入 CN/通用公共 DNS 列表，剔除写 INFO。</p>
+<h4>H：运行时退避</h4>
+<pre><code>sendto 遇到 EHOSTUNREACH / ENETUNREACH
+  → 首错 WARN + 记录该 nameserver 的 next_retry = now + 60s
+  → query 跳过冷却 server；冷却期重复失败只 DEBUG，不延长截止
+  → 所有 server 都冷却：只选最早到期的一台 fail-open 探测
+  → sendto 成功清账；到期允许重试；其他 errno 不退避</code></pre>
+<div class="risk">这是行为修改，不只是日志压缩。全冷却时仍保留一个出口，避免 DNS 完全停摆；“sendto 成功”只表示本地发送成功，不代表远端 DNS 健康。H 的 82 分钟观察未触发目标 errno，因此没有生产疗效结论。</div>
+</div></article>
+
+<article class="change" data-kind="logonly">
+<div class="change-head"><h3>reserved / frag 包字段检查：WARN 降 DEBUG</h3><span class="tag deployed">已部署</span> <span class="tag logonly">仅日志级别</span></div>
+<div class="change-body"><div class="path">smart_router/local/dns_server.py</div><p>这类字段检查曾达到约 14,897 条/天，但不是运行故障。降为 DEBUG 后仍可在 start_log 追查；没有改 DNS 包处理。F 重启窗口从 32,596 条降为 0 条 WARN。</p></div></article>
+
+<h3 id="front">5.3 Front 资源池、公共 HTTP 调度与日志设施</h3>
+<article class="change" data-kind="behavior logonly">
+<div class="change-head"><h3>IPv6 能力探测与前端过滤：没有可用全球 v6 时不再盲试</h3><span class="tag deployed">已部署</span> <span class="tag behavior">会改变 front 选择</span></div>
+<div class="change-body"><div class="path">x_tunnel/local/tls_relay_front/ip_manager.py · seley_front 经相对导入复用</div>
+<div class="logic"><div><strong>修改前</strong>服务器池或 getaddrinfo 返回 IPv6 就尝试连接；本机只有 link-local 时持续 No route to host。</div><div class="logic-arrow">→</div><div><strong>修改后</strong>UDP connect 探测并检查本地源地址是否全球单播；auto 模式无 v6 时跳过 v6 front，结果缓存 300 秒。</div></div>
+<dl class="fields"><dt>配置覆盖</dt><dd><code>force_ipv6</code> 强制保留，<code>force_ipv4</code> 强制过滤，默认 auto。</dd><dt>日志</dt><dd>实际发生 skip 时，每个探测周期一条 INFO；全 v6 池返回 None，由 no-IP 保留真实资源耗尽信号。</dd><dt>B4 修正</dt><dd>未指定源地址 <code>::</code> 不再误判为可用；seley bytes host 规范化，避免 TypeError。</dd></dl>
+<div class="risk">网络在缓存期接入 IPv6，最多等待 300 秒或重启才恢复；探测失败按无 v6 处理。auto 探测到真实全球 v6 时继续连接 v6 是设计行为。</div>
+</div></article>
+
+<article class="change" data-kind="logonly">
+<div class="change-head"><h3>xlog：10MB 单代滚动 + 通用 LogThrottle</h3><span class="tag deployed">已部署</span> <span class="tag mechanism">公共日志设施</span></div>
+<div class="change-body"><div class="path">lib/noarch/xlog.py</div>
+<dl class="fields"><dt>滚动挂点</dt><dd>初始化开文件、reset_log_files 重开、buffer_lock 内写前检查。</dd><dt>滚动行为</dt><dd>主 warning_log 超过 10MB 时滚为 <code>.1</code> 并重开主文件；只保留一代，约占上限 20MB。滚动失败不中断主日志写路径。</dd><dt>通用节流</dt><dd>提供带锁的 <code>allow(key) → (allowed, suppressed_count)</code>，供后续各层复用。</dd></dl>
+<div class="risk">单代滚动意味着下一次滚动会替换旧 <code>.1</code>，不是长期归档；长期历史需要另做归档。10MB 阈值在生产未触达，滚动正确性由离线测试证明。</div>
+</div></article>
+
+<article class="change" data-kind="logonly">
+<div class="change-head"><h3>no-IP：从单条重复 WARN 到“开始—过程—恢复”完整账目</h3><span class="tag deployed">已部署至 H</span> <span class="tag logonly">仅日志；原退避逻辑未改</span></div>
+<div class="change-body"><div class="path">lib/noarch/front_base/connect_manager.py</div>
+<pre><code>get_ip_sni_host() 返回 None
+  → no_ip_time = now（官方原有，连接线程据此歇 10 秒）
+  → total_no_ip_events += 1
+  → 60 秒内：suppressed += 1
+  → 到窗口：WARN(上一窗 suppressed)
+
+后续 get_ip_sni_host() 成功且账本处于旱态
+  → recovered(尾窗 suppressed, 本轮 total)
+  → 清空本轮日志账本；正常建连</code></pre>
+<dl class="fields"><dt>F</dt><dd>60 秒节流，限制连接线程空转产生的日志洪水。</dd><dt>G</dt><dd>放行行附上一窗 suppressed；恢复时补尾窗并清账。</dd><dt>H</dt><dd><code>total</code> 从“只算被抑制”改为“放行+抑制的总事件数”，所以单次事件恢复显示 total 1，而非 total 0。</dd></dl>
+<div class="ok">G 已观察到 recovered 尾账闭环；H 已观察到 total 1 新口径。微旱态仍保留 WARN，没有做延迟或降级。</div>
+</div></article>
+
+<article class="change" data-kind="logonly">
+<div class="change-head"><h3>H：_connect_ssl 按“前端 IP + 异常类别”聚合</h3><span class="tag deployed">已部署</span> <span class="tag logonly">仅日志</span></div>
+<div class="change-body"><div class="path">lib/noarch/front_base/connect_manager.py</div>
+<p>实例级 <code>LogThrottle(60)</code>，key = <code>(ip_str, type(e).__name__)</code>。同一前端同类异常 60 秒只展开一条；不同 front 或不同异常类别独立。</p>
+<p><strong>无论日志是否放行，<code>queue.put(e)</code> 都执行。</strong>建连、评分、重试、report_connect_fail 和异常回传不变。</p>
+<div class="ok">重启后的生产日志已出现 suppressed 尾缀。没有“连接成功即清账”的逻辑，因此尾账仍遵循通用 LogThrottle 边界。</div>
+</div></article>
+
+<article class="change" data-kind="logonly">
+<div class="change-head"><h3>HEAD 探活：从按短命 worker 改为按前端 IP 聚合</h3><span class="tag deployed">已部署至 G</span> <span class="tag logonly">仅日志</span></div>
+<div class="change-body"><div class="path">lib/noarch/front_base/http1.py · Http1Worker.head_request</div>
+<div class="logic"><div><strong>F 的问题</strong>失败后 worker 立即 close，每个 worker 至多一条，按 worker 节流在生产中结构性不可达。</div><div class="logic-arrow">→</div><div><strong>G 的逻辑</strong>类级 LogThrottle，key = 前端 <code>ip_str</code>；send len / status / exception 三出口统一，跨 worker 聚合。</div></div>
+<p>放行时保留 WARN+trace，下一窗 trace 附 suppressed；探测、recheck_ip、close 和返回值不变。http2 使用 PingFrame，不在此路径。</p>
+<div class="risk">同一前端的三类失败共享窗口，窗口内后续失败类别不会单独展开；这是用细节换聚合。稀疏失败超过 60 秒仍逐条出现，不会被无限压成每小时一条。</div>
+</div></article>
+
+<article class="change" data-kind="logonly pending">
+<div class="change-head"><h3>dispatcher：F 按完整 URL；I 改为 front + host + 去 tid endpoint</h3><span class="tag pending">I 已重启待疗效</span> <span class="tag logonly">仅日志</span></div>
+<div class="change-body"><div class="path">lib/noarch/front_base/http_dispatcher.py</div>
+<div class="logic"><div><strong>F 的不足</strong>key 是完整 task.url；每次 tid 不同，导致同一故障每个 URL 都开独立窗口。</div><div class="logic-arrow">→</div><div><strong>I 的逻辑</strong>key = <code>(method, host, endpoint bytes, front ip)</code>，endpoint 去查询参数；retry、task timeout、status 共用窗口。</div></div>
+<dl class="fields"><dt>保留证据</dt><dd>放行行仍含完整 URL/tid 与 trace，不会因为内部 key 去 tid 而丢掉样例。</dd><dt>字节安全</dt><dd>path 以 bytes 切分，不做严格 UTF-8 解码；非 UTF-8 路径不会为了写日志而中断重试或丢弃 response。</dd><dt>业务边界</dt><dd>fail 计数、重试、Queue、notify、响应和返回路径不变。</dd></dl>
+<div class="risk">retry/timeout/status 共用窗口意味着同 endpoint 的不同事件类别在同窗只展开首类；完整类别分布需结合其他日志层。I 仅有离线测试证据。</div>
+</div></article>
+
+<h3 id="xtunnel">5.4 X-Tunnel 会话、front retry 与下载接收</h3>
+<article class="change" data-kind="logonly pending">
+<div class="change-head"><h3>I：transfer 日志按事件所属 session 聚合，避免 reset 后错账</h3><span class="tag pending">已重启待疗效</span> <span class="tag logonly">仅日志</span></div>
+<div class="change-body"><div class="path">x_tunnel/local/proxy_session.py</div>
+<p>实例级 throttle 在后台线程启动前创建；key = <code>(session_id, transfer_no, kind)</code>。</p>
+<div class="table-wrap"><table><thead><tr><th>kind</th><th>事件</th><th>session 来源</th></tr></thead><tbody>
+<tr><td>ack timeout</td><td>check_upload_not_acked</td><td>对应 data_info 的 session</td></tr>
+<tr><td>retry</td><td>get_upload_data retry</td><td>对应 data_info 的 session</td></tr>
+<tr><td>roundtrip status</td><td>非 200 响应</td><td>网络请求前捕获的 request_session_id</td></tr>
+<tr><td>final failed</td><td>重试循环耗尽</td><td>网络请求前捕获的 request_session_id</td></tr>
+</tbody></table></div>
+<p>kind 隔离避免把 ACK 超时、重试和响应状态混成一类；显式 session 避免 reset 后旧响应与新 session 的同号 transfer 共用账本。</p>
+<div class="risk">状态迁移、retry、notify、sleep 和传输未改。离线 X1–X8 已覆盖错账边界；重启后首批不同 kind/transfer 首报符合设计，但仍需同 key 同窗重复样例验证生产聚合。非 200 原格式尾空格与 suppressed 前缀可能形成双空格，是不影响语义的延后 Minor。</div>
+</div></article>
+
+<article class="change" data-kind="logonly pending">
+<div class="change-head"><h3>I：front retry 按完整 host + path 聚合</h3><span class="tag pending">已重启待疗效</span> <span class="tag logonly">仅日志</span></div>
+<div class="change-body"><div class="path">x_tunnel/local/front_dispatcher.py</div>
+<p>模块级 <code>LogThrottle(60)</code>，key 保留完整 <code>(host, path)</code>：同一 tid 重复重试收敛，不同 tid 各自首报。front 选择、状态码、602、sleep、重试和请求内容不变。</p>
+<div class="risk">这里刻意不去 tid，与 dispatcher 的聚合目标不同：dispatcher 聚合“同 endpoint 的不同任务”，front retry 聚合“同一个 transfer 的重复重试”。</div>
+</div></article>
+
+<article class="change" data-kind="logonly pending">
+<div class="change-head"><h3>J：mark_sn_timeout 按 SN 聚合，reset 同时重置日志生命周期</h3><span class="tag pending">已重启待疗效</span> <span class="tag logonly">仅日志</span></div>
+<div class="change-body"><div class="path">x_tunnel/local/base_container.py · BlockReceivePool</div>
+<pre><code>SN 首次进入 timeout_sn_list
+  → allow(sn)；首报放行；无论 allowed 都写入 SN 状态
+
+已有 SN 且 t 更新
+  → allow(sn)；同窗 renew 只计数；无论 allowed 都更新 server_send_time
+
+重复或更旧 t（原本就无日志）
+  → 不调用 allow；不增加 suppressed；不消费下一窗放行
+
+reset()
+  → 在同一把 self.lock 内清空 SN 状态并替换 throttle
+  → 同号 SN 在新生命周期重新首报</code></pre>
+<p>独立审查补出两个关键边界：静默旧事件不能虚增 suppressed；reset/mark 必须互斥，否则新生命周期首报可能落入旧窗口。</p>
+<div class="risk">get_timeout_list、SN 更新条件、重试和传输未改。H 窗口的 742 条只是改造前基线，不是部署后的减量证明；J 目前只有 M1–M8 离线证据。</div>
+</div></article>
+
+<article class="change" data-kind="logonly">
+<div class="change-head"><h3>历史日志归档与在线止损</h3><span class="tag deployed">已执行</span> <span class="tag mechanism">运维 / 存储</span></div>
+<div class="change-body"><div class="path">backups/logs-20261027 · 7 份 warning 日志</div>
+<p>约 237MB 历史日志先归档并做字节校验，再对运行进程以 O_APPEND 持有的 5 份热日志执行 truncate；复核 fd 可继续写入。该操作释放历史体积，与后续 10MB 滚动是两层措施：一个处理存量，一个限制未来单文件。</p>
+</div></article>
+</section>
+
+<section class="section" id="audit">
+<h2>6. 判断逻辑是否有问题：建议重点看这 10 项</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>#</th><th>审查问题</th><th>当前设计与判断入口</th></tr></thead><tbody>
+<tr><td>1</td><td>日志被抑制时，业务是否也被跳过？</td><td>除 DNS/IPv6 等明确标记“行为”的项目外，allow 只包围日志语句；Queue、重试、状态更新必须仍在 allow 之外。I/J 测试专门验证了这一点。</td></tr>
+<tr><td>2</td><td>key 是否过细，导致节流失效？</td><td>F 的完整 URL 含 tid 就是过细；I 改为去查询参数 endpoint。key 必须对应“要聚合的故障对象”，而非日志字符串。</td></tr>
+<tr><td>3</td><td>key 是否过粗，导致不同故障被混合？</td><td>connect_ssl 加异常类别；x_tunnel 加 kind；dispatcher 不区分 retry/timeout/status、HEAD 不区分三出口，是有意的聚合取舍。</td></tr>
+<tr><td>4</td><td>reset 后是否沿用旧窗口？</td><td>x_tunnel 使用事件所属 session；J 在 reset 锁内替换 throttle。若只看 transfer_no/SN 而不看生命周期，就可能错账。</td></tr>
+<tr><td>5</td><td>尾账是否必须落盘？</td><td>正常生命周期内，send-block 有 close、no-IP 有 recovered 结算；通用 LogThrottle 没有，最后窗口计数可能在沉默后剪枝/reset/退出时丢失。两者若遇进程异常退出也同样无法保证尾账。若需要完整审计，应另做事件统计，而不是把 WARN 当审计流。</td></tr>
+<tr><td>6</td><td>静默事件是否也计数？</td><td>J 的旧/重复 t 原本无日志，因此不能调用 allow。否则 suppressed 会包含“从未打算打印的事件”，并吞掉跨窗放行。</td></tr>
+<tr><td>7</td><td>退避是否可能造成完全无出口？</td><td>DNS 全冷却时选择最早到期的一台 fail-open；IPv6 全被过滤后可能无 front，但 no-IP 会报警，这是资源真实不可用，不应伪造可用。</td></tr>
+<tr><td>8</td><td>日志降级是否掩盖真正异常？</td><td>reserved/frag 和预期 selector 竞态降 DEBUG；未知 Exception 仍 ERROR。no-module 仅未启用路由降噪，启动失败 WARN 未动。</td></tr>
+<tr><td>9</td><td>生产证据是否足够？</td><td>F/G 有窗口对比，H 有 connect_ssl 与 total 实证但 DNS 未触发；I 已出现首批独立首报但尚无同窗聚合样例，J 未触发。不能用“没有相关日志”代替疗效。</td></tr>
+<tr><td>10</td><td>日志存储是否有长期保留语义？</td><td>warning_log 只保留主文件和一代 .1；需要历史分析时必须依赖独立归档，不应把滚动文件当永久历史。</td></tr>
+</tbody></table></div>
+<div class="callout good"><strong>总体逻辑结论：</strong>当前设计的主线是“保留每个独立故障对象的首报，压缩同对象同窗重复，并在有明确生命周期终点时结算尾账”。它不是全局静默，也没有把网络失败当作已修复。真正需要持续审查的是 key 的生命周期、不同事件是否被过度合并，以及新版本的生产回归。</div>
+</section>
+
+<section class="section" id="evidence">
+<h2>7. 验证证据、已知边界与明确未做事项</h2>
+<div class="two-col">
+<div>
+<h3>已有生产证据</h3>
+<ul class="checklist">
+<li>10-26 / E：代理 204；DoT AttributeError、try_add ERROR、无效 DNS send_request 等按各自观察窗口收敛。</li>
+<li>F：seley retry trace 846→3；reserved/frag 32,596→0；7 份日志 ERROR 合计 0。</li>
+<li>G：no-IP recovered 尾账闭环；HEAD 按前端聚合；代理 204、零新增 ERROR。</li>
+<li>H：_connect_ssl suppressed 与 no-IP total 1 已出现。</li>
+</ul>
+</div>
+<div>
+<h3>疗效仍待观察</h3>
+<ul class="checklist">
+<li>H DNS 退避：延长观察约 82 分钟未出现目标 errno，只记录未触发。</li>
+<li>I：离线 R1–R9、X1–X8 通过；重启后首批不同 transfer/kind 首报符合设计，尚无同 key 同窗聚合样例。</li>
+<li>J：离线 M1–M8 通过；重启后尚未出现 mark_sn_timeout，不能评估生产疗效。</li>
+<li>10MB 滚动：生产未触达阈值，由滚动测试覆盖。</li>
+</ul>
+</div>
+</div>
+<h3>明确保留或未修，不要误认为已完成</h3>
+<ul class="checklist">
+<li><strong>K 已修复、未部署：</strong>Smart Router 启动顺序竞态。DNS 查询对象和 UDP 中继均已前移，S1/S2 及完整回归通过；当前生产进程仍是旧顺序，尚未部署或重启。</li>
+<li><code>xlog.py</code> 顶层 <code>warning()</code> 调用 <code>warnin</code> 的官方笔误：当前无调用方触达，未修。</li>
+<li>seley <code>host=None</code> 导致的 bytes 格式化边界：已定位并记录，未做防御性修复。</li>
+<li><code>req get response timeout</code>：与 I 的 dispatcher/retry 故障链同源，留待 I 部署后复评。</li>
+<li>微旱态降级、LogThrottle 后台脉冲结算、完整 episode 框架、全局 ERROR 限流：均未实施。</li>
+<li>上游 front 池质量、远端 handshake/connect timeout、check_update 网络不可达：不是本地日志补丁能够根治的项目。</li>
+</ul>
+<h3>I/J 重启后必须验证</h3>
+<ol class="checklist">
+<li>四个生产文件已完成备份、部署及 diff/SHA-256 校验；PID 24668 于 2026-10-31 18:16:13 启动并加载 I/J。</li>
+<li>两次代理 generate_204 均返回 204；首批 I 独立首报已出现，后续仍需在同 key 同窗重复时核对 suppressed，并观察 J 的 SN 事件。</li>
+<li>在同类故障窗口检查聚合 key、suppressed、不同对象首报、reset 生命周期和正常上下行；无事件只写“未触发”。</li>
+</ol>
+</section>
+
+<section class="section" id="files">
+<h2>8. 文件索引：日志与行为修改落点</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>文件</th><th>主要职责</th><th>日志操作 / 修改</th><th>状态</th></tr></thead><tbody>
+<tr><td class="path">start</td><td>启动与依赖</td><td>真实 BoringSSL 提示；用户级依赖安装</td><td><span class="tag deployed">已部署</span></td></tr>
+<tr><td class="path">launcher/mac_tray.py</td><td>macOS 托盘/helper</td><td>PyObjC、启动、持久 helper</td><td><span class="tag baseline">本地基线</span></td></tr>
+<tr><td class="path">launcher/web_control.py</td><td>Web 路由/debug</td><td>no-module WARN→DEBUG；线程帧快照</td><td><span class="tag deployed">已部署</span></td></tr>
+<tr><td class="path">launcher/web_ui/status.html</td><td>状态页</td><td>按启用状态停止无效轮询</td><td><span class="tag deployed">已部署</span></td></tr>
+<tr><td class="path">x_tunnel/local/upload_logs.py</td><td>诊断收集</td><td>按启用状态过滤 URL</td><td><span class="tag deployed">已部署</span></td></tr>
+<tr><td class="path">smart_router/local/__init__.py</td><td>Smart Router 启动</td><td>DNS 查询与服务先于代理启动，消除 None 初始化窗口</td><td><span class="tag pending">K 未部署</span></td></tr>
+<tr><td class="path">smart_router/local/dns_query.py</td><td>DoT/TCP/Local DNS</td><td>fd 修复、WARN 参数、nameserver INFO、DNS WARN/DEBUG 与退避</td><td><span class="tag deployed">已部署至 H</span></td></tr>
+<tr><td class="path">smart_router/local/dns_server.py</td><td>DNS 包处理</td><td>reserved/frag WARN→DEBUG</td><td><span class="tag deployed">已部署</span></td></tr>
+<tr><td class="path">smart_router/local/pipe_socks.py</td><td>非阻塞转发</td><td>selector DEBUG；send-block WARN/suppressed/final</td><td><span class="tag deployed">已部署</span></td></tr>
+<tr><td class="path">x_tunnel/local/tls_relay_front/ip_manager.py</td><td>front 池</td><td>IPv6 过滤与 skipped INFO</td><td><span class="tag deployed">已部署</span></td></tr>
+<tr><td class="path">lib/noarch/xlog.py</td><td>公共日志设施</td><td>warning_log 滚动、LogThrottle</td><td><span class="tag deployed">已部署</span></td></tr>
+<tr><td class="path">lib/noarch/front_base/connect_manager.py</td><td>建连与 front 资源</td><td>no-IP WARN/recovered；_connect_ssl WARN/suppressed</td><td><span class="tag deployed">已部署至 H</span></td></tr>
+<tr><td class="path">lib/noarch/front_base/http1.py</td><td>HTTP/1 worker</td><td>HEAD 三出口 WARN+trace，按 front IP 聚合</td><td><span class="tag deployed">已部署至 G</span></td></tr>
+<tr><td class="path">lib/noarch/front_base/http_dispatcher.py</td><td>任务调度</td><td>retry/timeout/status 日志聚合</td><td><span class="tag pending">I 已重启待疗效</span></td></tr>
+<tr><td class="path">x_tunnel/local/proxy_session.py</td><td>会话与 transfer</td><td>ack/retry/roundtrip/failed 聚合</td><td><span class="tag pending">I 已重启待疗效</span></td></tr>
+<tr><td class="path">x_tunnel/local/front_dispatcher.py</td><td>x_tunnel front 调用</td><td>front retry 按 host+path 聚合</td><td><span class="tag pending">I 已重启待疗效</span></td></tr>
+<tr><td class="path">x_tunnel/local/base_container.py</td><td>下载接收池</td><td>mark_sn_timeout 首报/renew 按 SN 聚合</td><td><span class="tag pending">J 已重启待疗效</span></td></tr>
+</tbody></table></div>
+<p class="small">权威细节来源：<a href="XX-Net-macOS-ARM64-修复记录.md">XX-Net-macOS-ARM64-修复记录.md</a> 与 <a href="../Coding/XX-Net-5.16.7.1/LOCAL-VERSION.md">LOCAL-VERSION.md</a>。本总结基于 J 阶段提交 <code>735a73ca12683c2aac6f3b051e9be80575ffe48d</code> 整理。</p>
+</section>
+<div class="footer">XX-Net 本地修改逻辑总结 · 生成于 2026-10-30 · 本文件不修改程序、不部署、不重启</div>
+</main>
+</div>
+<script>
+(function(){
+  var buttons=document.querySelectorAll('.filter-btn');
+  var cards=document.querySelectorAll('.change[data-kind]');
+  buttons.forEach(function(button){
+    button.addEventListener('click',function(){
+      buttons.forEach(function(b){b.classList.remove('active');});
+      button.classList.add('active');
+      var filter=button.getAttribute('data-filter');
+      cards.forEach(function(card){
+        var kinds=card.getAttribute('data-kind').split(/\s+/);
+        card.classList.toggle('hidden-by-filter',filter!=='all'&&kinds.indexOf(filter)===-1);
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>
