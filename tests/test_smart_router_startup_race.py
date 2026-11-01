@@ -101,6 +101,7 @@ class CombineDnsQuery(EmptyService):
         return ["192.0.2.1"]
 
 
+saved_modules = sys.modules.copy()
 temp_root = tempfile.mkdtemp(prefix="xxnet-startup-race-")
 try:
     module("env_info", data_path=temp_root)
@@ -217,4 +218,6 @@ try:
         sys.exit(1)
     print("RESULT: ALL PASS")
 finally:
+    sys.modules.clear()
+    sys.modules.update(saved_modules)
     shutil.rmtree(temp_root)

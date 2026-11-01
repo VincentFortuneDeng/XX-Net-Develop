@@ -5,7 +5,7 @@
 按用户批准的顺序，在生产观察之后完成两项小修改：
 
 1. 当 Smart Router 的代理 HTTP Server 构造或启动失败时，回收此前已经启动的 DNS、UDP 中继、PipeSocks 与 ConnectManager 资源，并保留原始启动异常。
-2. 让 `test_smart_router_startup_race.py` 在成功或失败退出时都恢复 `sys.modules`，避免替换模块泄漏到同一 Python 进程中的其他测试。
+2. 让 `test_smart_router_startup_race.py` 在成功或失败退出时都恢复被替换或插入的应用模块，避免替身泄漏到同一 Python 进程中的其他测试；脚本自身正常导入的标准库模块不要求卸载。
 
 ## 边界
 

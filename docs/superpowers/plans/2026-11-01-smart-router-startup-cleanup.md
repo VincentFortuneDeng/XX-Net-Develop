@@ -67,7 +67,7 @@ Expected: S1/S2/S3/S4 全部通过，输出 `RESULT: ALL PASS`。
 
 **Interfaces:**
 - Consumes: Task 1 后 S1–S4 全部通过的启动竞态脚本。
-- Produces: 脚本成功执行后，`sys.modules` 与执行前一致。
+- Produces: 脚本成功执行后，所有被替换或插入的应用模块均恢复；脚本自身正常导入的标准库模块允许保留。
 
 - [ ] **Step 1: 写隔离回归**
 
