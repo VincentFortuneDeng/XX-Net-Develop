@@ -795,7 +795,7 @@ I 阶段代码于 2026-10-29 完成，2026-10-31 已与 J 一并部署到 `/Appl
 - M 已出现 **16 条** `transfer final suppressed:... keys:...`，证明 ProxySession 真实 stop/reset 终点的聚合尾账已经落盘；其他终点仍按实际事件观察，不能由 transfer 样例推断全部终点都已触发。
 - 新发现一条既有 `SocketWrap.close()` 的 EBADF ERROR（2026-11-01 16:10:55），与 K/L/M 修改无直接调用关系，约 20 小时内仅此一条；作为独立后续候选，不混入 N 阶段启动清理。
 
-# N 阶段：代理启动失败资源清理与测试隔离（2026-11-01，开发完成未部署）
+# N 阶段：代理启动失败资源清理与测试隔离（2026-11-01，已部署待重启）
 ## 范围与语义
 - 仅包裹 `simple_http_server.HTTPServer(...)` 构造与 `g.proxy_server.start()`；代理启动失败后先置 `ready=False`，再按 `dns_srv → dns_query → pipe_socks → connect_manager` 逆序各尝试一次 stop。
 - 每项清理异常独立由 `xlog.exception()` 记录，不能阻止后续资源清理，也不能遮蔽原始代理异常；清理结束后裸 `raise`。
@@ -808,7 +808,9 @@ I 阶段代码于 2026-10-29 完成，2026-10-31 已与 J 一并部署到 `/Appl
 - 独立审查无 Critical、Important 或 Minor；无修复轮次、无第二轮 re-review。
 - 完整回归：S1–S4 与隔离 PASS，xlog **38/38**、dispatcher **12/12**、x_tunnel **14/14**、SN **9/9**、DNS **9/9**，五套既有回归全部通过，fd 探针 **A(detached)**，目标文件 py_compile 与 `git diff --check` 通过。
 
-## 生效边界与后续顺序
-- N 仅完成开发快照、测试与文档，**未部署、未重启、未 push**；不得写成生产资源清理已生效。
+## 部署记录、生效边界与后续顺序
+- 2026-11-01 19:28 仅将开发快照的 `smart_router/local/__init__.py` 部署到 `/Applications/XX-Net` 对应路径。部署前原文件与差异保存于 `backups/pre-rsync-20261101-n/`，未覆盖 H/I/J/K/L/M 既有备份。
+- 部署后开发快照与生产文件 `cmp` 逐字节一致，SHA-256 均为 `335f2090b3b525a98c4e679c0db1ea79411ef026cfb1f39a71c1687846fd14a8`；备份原文件 SHA-256 为 `44eb59e7aa118d25400346532bbe6af2cae3a8581ff0d9ab2cec30669e2f8771`。
+- 当前状态为**已部署待重启、未 push**。运行中的旧进程尚未加载 N；重启前及重启后若未发生代理启动失败，都只能记录清理路径未触发，不能把离线测试或文件部署写成生产资源清理疗效。
 - 独立事件统计暂不实施：M 已有真实 transfer final 证据，HEAD/异常退出的数量注解边界不值得为此引入全局脉冲。
-- 交付包与上游整理等待 N 部署后的稳定证据；既有 SocketWrap.close EBADF 是独立低频候选，后续先复现和分析 close 调用链，不与本轮混合。
+- 交付包与上游整理等待 N 重启后的稳定证据；既有 SocketWrap.close EBADF 是独立低频候选，后续先复现和分析 close 调用链，不与本轮混合。

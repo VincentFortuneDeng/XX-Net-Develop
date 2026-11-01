@@ -41,7 +41,7 @@
     <span class="badge deployed">I/J 已部署并随新进程加载</span>
     <span class="badge deployed">I/J 同 key 聚合已有生产实证</span>
     <span class="badge deployed">K/L/M 已部署并随新进程加载</span>
-    <span class="badge pending">N 开发完成 · 未部署</span>
+    <span class="badge pending">N 已部署 · 待重启加载</span>
     <span class="badge mechanism">独立 HTML · 无外部依赖</span>
   </div>
   <div class="summary-grid">
@@ -78,7 +78,7 @@
   <div class="timeline-item"><strong>10-31 · K：Smart Router 启动竞态</strong><span class="small">DNS 查询对象、DNS 服务与 UDP 中继均前移到代理启动之前；S1/S2 RED→GREEN，已重启，本轮启动未复现。</span></div>
   <div class="timeline-item"><strong>10-31 · L：剩余推荐错误修复</strong><span class="small">host=None 诊断 URL 占位、xlog.warning 委托修正；R10/B9 RED→GREEN。req timeout 当前为 0，不新增节流。</span></div>
   <div class="timeline-item"><strong>10-31 · M：生命周期尾账结算</strong><span class="small">五个真实 stop/reset 终点各补一条聚合尾账并清账，不增加后台线程；已出现 16 条 transfer final 生产尾账。</span></div>
-  <div class="timeline-item"><strong>11-01 · N：启动失败清理与测试隔离</strong><span class="small">代理启动失败按逆序清理既有资源并保留原异常；S3/S4 与 sys.modules 隔离回归 RED→GREEN，未部署。</span></div>
+  <div class="timeline-item"><strong>11-01 · N：启动失败清理与测试隔离</strong><span class="small">代理启动失败按逆序清理既有资源并保留原异常；S3/S4 与 sys.modules 隔离回归 RED→GREEN，已部署待重启。</span></div>
 </div>
 </section>
 
@@ -337,15 +337,15 @@ reset()
 </div></article>
 
 <article class="change" data-kind="behavior pending">
-<div class="change-head"><h3>N：代理启动失败时回收已启动资源</h3><span class="tag pending">开发完成 · 未部署</span> <span class="tag behavior">启动清理 / 测试隔离</span></div>
+<div class="change-head"><h3>N：代理启动失败时回收已启动资源</h3><span class="tag pending">已部署 · 待重启</span> <span class="tag behavior">启动清理 / 测试隔离</span></div>
 <div class="change-body"><div class="path">smart_router/local/__init__.py · test_smart_router_startup_race.py · test_smart_router_startup_test_isolation.py</div>
 <pre><code>HTTPServer 构造或 start() 失败
   → ready=False
   → dns_srv.stop → dns_query.stop → pipe_socks.stop → connect_manager.stop
   → 单项清理异常只记录，不阻断后续清理
   → 裸 raise 保留原始代理启动异常</code></pre>
-<dl class="fields"><dt>业务边界</dt><dd>K 的正常初始化顺序、正常 ready=True 与原 stop() 不变；不处理 DnsServer 自身部分初始化失败。</dd><dt>测试隔离</dt><dd>启动脚本 finally 恢复应用模块替身；独立 runpy 回归检查对象身份与新增模块移除，普通标准库导入允许保留。</dd><dt>验证</dt><dd>S3 旧实现 events=[] 且 ready=True；修复后 S1–S4、隔离及完整回归通过，独立审查无 Critical/Important/Minor。</dd></dl>
-<div class="risk">N 只有开发快照与离线证据，未部署、未重启、未 push，不能声称生产资源清理已经生效。</div>
+<dl class="fields"><dt>业务边界</dt><dd>K 的正常初始化顺序、正常 ready=True 与原 stop() 不变；不处理 DnsServer 自身部分初始化失败。</dd><dt>测试隔离</dt><dd>启动脚本 finally 恢复应用模块替身；独立 runpy 回归检查对象身份与新增模块移除，普通标准库导入允许保留。</dd><dt>验证</dt><dd>S3 旧实现 events=[] 且 ready=True；修复后 S1–S4、隔离及完整回归通过，独立审查无 Critical/Important/Minor。</dd><dt>部署证据</dt><dd>2026-11-01 19:28 仅部署生产 __init__.py；原文件与差异备份于 backups/pre-rsync-20261101-n/。cmp 一致，SHA-256 为 335f2090b3b525a98c4e679c0db1ea79411ef026cfb1f39a71c1687846fd14a8。</dd></dl>
+<div class="risk">N 已部署待重启、未 push。当前进程尚未加载；只有离线测试和文件校验证据，不能声称生产资源清理已经生效。</div>
 </div></article>
 
 <article class="change" data-kind="logonly">
@@ -400,7 +400,7 @@ reset()
 <h3>明确保留或未修，不要误认为已完成</h3>
 <ul class="checklist">
 <li><strong>K/L/M 已部署并随 PID 74385 加载：</strong>约 20 小时代理仍为 204，K 两类 NoneType 为 0，L host=None 为 0；M 已有 transfer final 实证。另发现一条既有 SocketWrap.close EBADF，留作独立候选。</li>
-<li><strong>N 开发完成、未部署：</strong>代理启动失败资源清理与测试隔离已通过 S1–S4、独立隔离回归和完整回归；独立审查无问题，但未重启加载，不声称生产生效。</li>
+<li><strong>N 已部署、待重启：</strong>代理启动失败资源清理与测试隔离已通过 S1–S4、独立隔离回归和完整回归；生产文件 cmp 与 SHA-256 校验一致，但当前进程尚未加载，不声称生产清理生效。</li>
 <li><code>req get response timeout</code>：当前四份 x_tunnel warning 日志及 I/J 重启后均为 0，未达到高频条件，本轮不做新增节流。</li>
 <li>微旱态降级、LogThrottle 后台脉冲、完整 episode 框架、全局 ERROR 限流：均未实施；M 只接真实生命周期终点，不做全局定时结算。</li>
 <li>上游 front 池质量、远端 handshake/connect timeout、check_update 网络不可达：不是本地日志补丁能够根治的项目。</li>
@@ -422,7 +422,7 @@ reset()
 <tr><td class="path">launcher/web_control.py</td><td>Web 路由/debug</td><td>no-module WARN→DEBUG；线程帧快照</td><td><span class="tag deployed">已部署</span></td></tr>
 <tr><td class="path">launcher/web_ui/status.html</td><td>状态页</td><td>按启用状态停止无效轮询</td><td><span class="tag deployed">已部署</span></td></tr>
 <tr><td class="path">x_tunnel/local/upload_logs.py</td><td>诊断收集</td><td>按启用状态过滤 URL</td><td><span class="tag deployed">已部署</span></td></tr>
-<tr><td class="path">smart_router/local/__init__.py</td><td>Smart Router 启动</td><td>DNS 先于代理启动；N 代理启动失败逆序清理资源</td><td><span class="tag deployed">K 已加载</span> <span class="tag pending">N 未部署</span></td></tr>
+<tr><td class="path">smart_router/local/__init__.py</td><td>Smart Router 启动</td><td>DNS 先于代理启动；N 代理启动失败逆序清理资源</td><td><span class="tag deployed">K 已加载</span> <span class="tag pending">N 已部署待重启</span></td></tr>
 <tr><td class="path">smart_router/local/dns_query.py</td><td>DoT/TCP/Local DNS</td><td>fd 修复、WARN 参数、nameserver INFO、DNS WARN/DEBUG 与退避</td><td><span class="tag deployed">已部署至 H</span></td></tr>
 <tr><td class="path">smart_router/local/dns_server.py</td><td>DNS 包处理</td><td>reserved/frag WARN→DEBUG</td><td><span class="tag deployed">已部署</span></td></tr>
 <tr><td class="path">smart_router/local/pipe_socks.py</td><td>非阻塞转发</td><td>selector DEBUG；send-block WARN/suppressed/final</td><td><span class="tag deployed">已部署</span></td></tr>
@@ -435,7 +435,7 @@ reset()
 <tr><td class="path">x_tunnel/local/front_dispatcher.py</td><td>x_tunnel front 调用</td><td>front retry 按 host+path 聚合；M stop 尾账</td><td><span class="tag pending">I 已聚合 / M final 未触发</span></td></tr>
 <tr><td class="path">x_tunnel/local/base_container.py</td><td>下载接收池</td><td>mark_sn_timeout 按 SN 聚合；M reset 尾账</td><td><span class="tag pending">J 已首报 / M final 未触发</span></td></tr>
 </tbody></table></div>
-<p class="small">权威细节来源：<a href="XX-Net-macOS-ARM64-修复记录.md">XX-Net-macOS-ARM64-修复记录.md</a> 与 <a href="../Coding/XX-Net-5.16.7.1/LOCAL-VERSION.md">LOCAL-VERSION.md</a>。本总结覆盖至 N 阶段工作区，提交、部署与重启状态以第 2 节为准。</p>
+<p class="small">权威细节来源：<a href="XX-Net-macOS-ARM64-修复记录.md">XX-Net-macOS-ARM64-修复记录.md</a> 与 <a href="../Coding/XX-Net-5.16.7.1/LOCAL-VERSION.md">LOCAL-VERSION.md</a>。本总结覆盖至 N 阶段部署记录，提交、部署与重启状态以第 2 节为准。</p>
 </section>
 <div class="footer">XX-Net 本地修改逻辑总结 · 生成于 2026-10-30 · 本文件不修改程序、不部署、不重启</div>
 </main>
