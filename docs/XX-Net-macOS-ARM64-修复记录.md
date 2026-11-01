@@ -781,10 +781,34 @@ I 阶段代码于 2026-10-29 完成，2026-10-31 已与 J 一并部署到 `/Appl
 - 最终结果：xlog **38/38**、dispatcher **12/12**、x_tunnel **14/14**、SN **9/9**，K S1/S2 与 DNS **9/9** 全过；五套既有回归全部通过，fd 探针保持 **A(detached)**；六个生产文件 `py_compile` 与 `git diff --check` 通过。
 ## 生效边界
 - M 六个生产文件已于 2026-10-31 部署到 `/Applications/XX-Net`，覆盖前 `.orig` 与部署差异 `.diff` 保存在 `backups/pre-rsync-20261031-m/`，既有 H/I/J/K/L 备份均未改动。rsync 后逐文件 cmp 与 SHA-256 一致：xlog `ba882e52bc7320512b44bf64c3b7372c3c20da909a6747429f4cdf0ab82671df`，http_dispatcher `e9f35a537a72d7742e2cc056671bd050baab520f9f1eb687d57395afb3be0981`，connect_manager `7c47926fc273c58eae09f98c21b43d628f2cf769861d645b6d177ef29a308cd8`，proxy_session `dffa784dd3d66045eaefb9b779a610e6b209212daa5a94f8f4f8b221455baed8`，base_container `8b576647f1ff54002c690dec0fd86d748fbef76fd41621a65481cffd4294be26`，front_dispatcher `e172e682a286aaba0f184a35b11386f3de984a827a83adea694982c1f63f6ae0`。
-- 当前进程尚未重启，K/L/M 均未由新进程加载；离线测试和文件校验不等于生产疗效。用户重启后核对新 PID/启动时间、8086、代理 204 与启动 ERROR；生产只在实际 stop/reset 且有 suppressed 时出现 final 汇总，无目标事件只记未触发。
+- K/L/M 已随新进程加载；离线测试和文件校验不等于生产疗效。重启初审与约 20 小时观察见下两节；生产只在实际 stop/reset 且有 suppressed 时出现 final 汇总，无目标事件只记未触发。
 
 ## K/L/M 重启后生产核验（2026-10-31）
 - 用户重启后新 PID **74385**，启动时间 **21:10:26**；1080、8085、8086 均监听，经 8086 请求 `http://www.gstatic.com/generate_204` 返回 **204**。直接访问 8086 根路径返回 404，仅作端口响应记录，不是代理失败。
 - 审计 21:10:26 之后的 launcher、Smart Router、x_tunnel 与三份 front 日志：未出现 ERROR/CRITICAL/Traceback，未复现 `NoneType.query_recursively` 或 `NoneType.udp_relay_port`，记为 K 本轮一次启动未复现，不扩大为所有时序均已证明。
 - 本轮未出现 dispatcher `host=None` 目标路径或相关格式化异常，L 只记未触发；未出现带 suppressed 的目标 stop/reset，五类 `final suppressed` 均未触发，不能声称生产尾账已经落盘。
 - 同期 WARNING 为既有 `_connect_ssl`、`not enough ip`、`get_front_time` 与 `pac_server GET / fail`，未因本轮核验额外修改业务或日志逻辑。
+
+## K/L/M 约 20 小时生产观察（2026-11-01）
+- PID 74385 持续运行约 20 小时，复核 8086 代理 `generate_204` 仍返回 204；K 两类 NoneType 继续为 0，L host=None 目标路径与 `req get response timeout` 继续为 0。
+- I 已出现大量同 key 同窗 suppressed 聚合样例，包括 dispatcher retry、x_tunnel roundtrip 与 front retry；J 已出现 `mark_sn_timeout` 首报。它们证明真实日志聚合路径已执行，不把 suppressed 数解释为网络事件被丢弃。
+- M 已出现 **16 条** `transfer final suppressed:... keys:...`，证明 ProxySession 真实 stop/reset 终点的聚合尾账已经落盘；其他终点仍按实际事件观察，不能由 transfer 样例推断全部终点都已触发。
+- 新发现一条既有 `SocketWrap.close()` 的 EBADF ERROR（2026-11-01 16:10:55），与 K/L/M 修改无直接调用关系，约 20 小时内仅此一条；作为独立后续候选，不混入 N 阶段启动清理。
+
+# N 阶段：代理启动失败资源清理与测试隔离（2026-11-01，开发完成未部署）
+## 范围与语义
+- 仅包裹 `simple_http_server.HTTPServer(...)` 构造与 `g.proxy_server.start()`；代理启动失败后先置 `ready=False`，再按 `dns_srv → dns_query → pipe_socks → connect_manager` 逆序各尝试一次 stop。
+- 每项清理异常独立由 `xlog.exception()` 记录，不能阻止后续资源清理，也不能遮蔽原始代理异常；清理结束后裸 `raise`。
+- K 正常初始化顺序、正常 ready=True 和原 `stop()` 均未修改；不处理 DnsServer 自身 start 的部分初始化失败，不扩张到其他资源抽象。
+- 启动竞态脚本在首次替换模块前快照 `sys.modules`，finally 恢复应用模块替身；普通标准库导入允许保留。独立回归用 runpy 同进程执行真实脚本，检查原模块对象身份与新增应用模块移除。
+
+## TDD、审查与验证
+- S3 在旧实现按目标 RED：`events=[]`、原代理异常存在但 `ready=True`；修复后四项资源按逆序清理，ready=False。S4 令首个 dns_srv.stop 抛异常，验证其余资源仍清理且原始 `RuntimeError("proxy bind failed")` 不变。
+- 隔离回归在旧脚本上证明 env_info/xlog 与 Smart Router 替身残留；初版全模块表相等断言误把正常标准库导入当污染，按 ledger Ruling 收窄为所有被替换/插入应用模块，最终通过。
+- 独立审查无 Critical、Important 或 Minor；无修复轮次、无第二轮 re-review。
+- 完整回归：S1–S4 与隔离 PASS，xlog **38/38**、dispatcher **12/12**、x_tunnel **14/14**、SN **9/9**、DNS **9/9**，五套既有回归全部通过，fd 探针 **A(detached)**，目标文件 py_compile 与 `git diff --check` 通过。
+
+## 生效边界与后续顺序
+- N 仅完成开发快照、测试与文档，**未部署、未重启、未 push**；不得写成生产资源清理已生效。
+- 独立事件统计暂不实施：M 已有真实 transfer final 证据，HEAD/异常退出的数量注解边界不值得为此引入全局脉冲。
+- 交付包与上游整理等待 N 部署后的稳定证据；既有 SocketWrap.close EBADF 是独立低频候选，后续先复现和分析 close 调用链，不与本轮混合。
