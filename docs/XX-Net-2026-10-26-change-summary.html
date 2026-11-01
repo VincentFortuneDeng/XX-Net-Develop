@@ -40,7 +40,7 @@
   <div class="badges">
     <span class="badge deployed">I/J 已部署并随新进程加载</span>
     <span class="badge pending">首批首报已出现，疗效待观察</span>
-    <span class="badge pending">K/L/M 已部署，待重启</span>
+    <span class="badge deployed">K/L/M 已部署并随新进程加载</span>
     <span class="badge mechanism">独立 HTML · 无外部依赖</span>
   </div>
   <div class="summary-grid">
@@ -74,7 +74,7 @@
   <div class="timeline-item"><strong>10-29 · H：语义修正与行为型退避</strong><span class="small">no-IP total 改为总事件数；_connect_ssl 按 IP+异常类别聚合；DNS 对路由不可达做 60 秒退避。</span></div>
   <div class="timeline-item"><strong>10-29 · I：修正聚合维度</strong><span class="small">去掉 dispatcher key 中会变化的 tid；x_tunnel 按事件所属 session/transfer/kind 聚合。已部署并重启，首批首报已出现。</span></div>
   <div class="timeline-item"><strong>10-29 · J：下载接收池日志</strong><span class="small">按 SN 聚合 mark_sn_timeout；reset 同步重置账本并保证并发原子性。已部署并重启，首批首报已出现。</span></div>
-  <div class="timeline-item"><strong>10-31 · K：Smart Router 启动竞态</strong><span class="small">DNS 查询对象、DNS 服务与 UDP 中继均前移到代理启动之前；S1/S2 RED→GREEN，已部署待重启。</span></div>
+  <div class="timeline-item"><strong>10-31 · K：Smart Router 启动竞态</strong><span class="small">DNS 查询对象、DNS 服务与 UDP 中继均前移到代理启动之前；S1/S2 RED→GREEN，已重启，本轮启动未复现。</span></div>
   <div class="timeline-item"><strong>10-31 · L：剩余推荐错误修复</strong><span class="small">host=None 诊断 URL 占位、xlog.warning 委托修正；R10/B9 RED→GREEN。req timeout 当前为 0，不新增节流。</span></div>
   <div class="timeline-item"><strong>10-31 · M：生命周期尾账结算</strong><span class="small">五个真实 stop/reset 终点各补一条聚合尾账并清账，不增加后台线程；六项新测试 RED→GREEN。</span></div>
 </div>
@@ -177,11 +177,11 @@
 
 <h3 id="dns">5.2 Smart Router / DNS / socket 转发</h3>
 <article class="change" data-kind="behavior pending">
-<div class="change-head"><h3>K：代理启动前，先让 DNS 查询与 UDP 中继全部就绪</h3><span class="tag pending">已部署 · 待重启</span> <span class="tag behavior">启动顺序 / 错误修复</span></div>
+<div class="change-head"><h3>K：代理启动前，先让 DNS 查询与 UDP 中继全部就绪</h3><span class="tag deployed">已重启 · 本轮未复现</span> <span class="tag behavior">启动顺序 / 错误修复</span></div>
 <div class="change-body"><div class="path">smart_router/local/__init__.py · start</div>
 <div class="logic"><div><strong>修改前</strong><code>proxy_server.start()</code> 先让代理线程接请求，随后才初始化 <code>g.dns_query</code> 和 <code>g.dns_srv</code>；启动首请求可能访问 None。</div><div class="logic-arrow">→</div><div><strong>修改后</strong>初始化顺序为 <code>g.local_ips → g.dns_query → g.dns_srv → g.proxy_server</code>，代理可见前 DNS 查询、DNS 服务和 UDP 中继端口均已就绪。</div></div>
 <dl class="fields"><dt>覆盖路径</dt><dd>S1 覆盖域名代理的 <code>query_recursively</code>；S2 覆盖 SOCKS5 UDP ASSOCIATE 的 <code>udp_relay_port</code>，两者均在旧顺序按目标 RED、最终 GREEN。</dd><dt>业务边界</dt><dd>只调整初始化顺序并分离代理/DNS 地址变量；不改 DNS 查询、代理转发、端口参数或 I/J 逻辑。</dd><dt>审查</dt><dd>独立审查发现 S2 的 Important 后已修复；完整回归通过。代理绑定失败时的 DNS 资源清理、测试 sys.modules 恢复两项 Minor 延后。</dd></dl>
-<div class="risk">K/L 已部署到 /Applications/XX-Net 并完成 cmp/SHA-256 校验，备份位于 backups/pre-rsync-20261031-kl；当前进程尚未重启加载，需要重启后做生产验证。</div>
+<div class="risk">K/L/M 已部署并随 PID 74385（21:10:26）加载；K/L 备份位于 backups/pre-rsync-20261031-kl。本轮启动未复现两类 NoneType，代理 204；单次启动不代表所有时序均已覆盖。</div>
 </div></article>
 
 <article class="change" data-kind="behavior">
@@ -236,7 +236,7 @@
 </div></article>
 
 <article class="change" data-kind="logonly pending">
-<div class="change-head"><h3>xlog：10MB 单代滚动 + 通用 LogThrottle</h3><span class="tag deployed">F 已部署</span> <span class="tag pending">L warning 修复待重启</span> <span class="tag mechanism">公共日志设施</span></div>
+<div class="change-head"><h3>xlog：10MB 单代滚动 + 通用 LogThrottle</h3><span class="tag deployed">F 已部署</span> <span class="tag deployed">L warning 修复已加载</span> <span class="tag mechanism">公共日志设施</span></div>
 <div class="change-body"><div class="path">lib/noarch/xlog.py</div>
 <dl class="fields"><dt>滚动挂点</dt><dd>初始化开文件、reset_log_files 重开、buffer_lock 内写前检查。</dd><dt>滚动行为</dt><dd>主 warning_log 超过 10MB 时滚为 <code>.1</code> 并重开主文件；只保留一代，约占上限 20MB。滚动失败不中断主日志写路径。</dd><dt>通用节流</dt><dd>提供带锁的 <code>allow(key) → (allowed, suppressed_count)</code>，供后续各层复用。</dd><dt>L 笔误修复</dt><dd>顶层 <code>warning()</code> 从错误的 <code>default_log.warnin</code> 改为 <code>default_log.warn</code>，完整传递 fmt/args/kwargs；B9 先 RED 后 GREEN。</dd></dl>
 <div class="risk">单代滚动意味着下一次滚动会替换旧 <code>.1</code>，不是长期归档；长期历史需要另做归档。10MB 阈值在生产未触达，滚动正确性由离线测试证明。</div>
@@ -275,11 +275,11 @@
 </div></article>
 
 <article class="change" data-kind="behavior logonly pending">
-<div class="change-head"><h3>dispatcher：F 按完整 URL；I 改为 front + host + 去 tid endpoint</h3><span class="tag pending">I 已重启待疗效</span> <span class="tag pending">L host 修复待重启</span> <span class="tag logonly">聚合仅日志</span> <span class="tag behavior">错误修复</span></div>
+<div class="change-head"><h3>dispatcher：F 按完整 URL；I 改为 front + host + 去 tid endpoint</h3><span class="tag pending">I 已重启待疗效</span> <span class="tag deployed">L host 修复已加载</span> <span class="tag logonly">聚合仅日志</span> <span class="tag behavior">错误修复</span></div>
 <div class="change-body"><div class="path">lib/noarch/front_base/http_dispatcher.py</div>
 <div class="logic"><div><strong>F 的不足</strong>key 是完整 task.url；每次 tid 不同，导致同一故障每个 URL 都开独立窗口。</div><div class="logic-arrow">→</div><div><strong>I 的逻辑</strong>key = <code>(method, host, endpoint bytes, front ip)</code>，endpoint 去查询参数；retry、task timeout、status 共用窗口。</div></div>
 <dl class="fields"><dt>保留证据</dt><dd>放行行仍含完整 URL/tid 与 trace，不会因为内部 key 去 tid 而丢掉样例。</dd><dt>字节安全</dt><dd>path 以 bytes 切分，不做严格 UTF-8 解码；非 UTF-8 路径不会为了写日志而中断重试或丢弃 response。</dd><dt>L：host=None</dt><dd>默认诊断 URL 用 <code>&lt;unknown&gt;</code> 占位，避免 bytes 格式化 TypeError；原始 task.host/last_host、重试、响应和 fail/notify 语义不变。R10 先复现异常再验证正常 timeout 路径。</dd><dt>业务边界</dt><dd>fail 计数、重试、Queue、notify、响应和返回路径不变。</dd></dl>
-<div class="risk">retry/timeout/status 共用窗口意味着同 endpoint 的不同事件类别在同窗只展开首类；完整类别分布需结合其他日志层。I 已出现首批独立首报，L 的 host=None 修复已部署待重启。</div>
+<div class="risk">retry/timeout/status 共用窗口意味着同 endpoint 的不同事件类别在同窗只展开首类；完整类别分布需结合其他日志层。I 已出现首批独立首报；L 已随新进程加载，本轮 host=None 目标路径未触发。</div>
 </div></article>
 
 <h3 id="xtunnel">5.4 X-Tunnel 会话、front retry 与下载接收</h3>
@@ -324,14 +324,14 @@ reset()
 </div></article>
 
 <article class="change" data-kind="logonly pending">
-<div class="change-head"><h3>M：真实 stop/reset 终点结算 LogThrottle 尾账</h3><span class="tag pending">已部署 · 待重启</span> <span class="tag logonly">仅日志</span></div>
+<div class="change-head"><h3>M：真实 stop/reset 终点结算 LogThrottle 尾账</h3><span class="tag deployed">已重启 · final 待事件</span> <span class="tag logonly">仅日志</span></div>
 <div class="change-body"><div class="path">xlog.py · http_dispatcher.py · connect_manager.py · proxy_session.py · front_dispatcher.py · base_container.py</div>
 <pre><code>stop / reset 生命周期终点
   → flush() 在账本锁内汇总并清空，随后封住旧生命周期
   → 在外层业务锁释放后输出每个对象最多一条 final 汇总 WARN
   → 迟到事件不重开账；start/init 调 reset() 开启新生命周期</code></pre>
 <dl class="fields"><dt>五个终点</dt><dd>dispatcher.stop、ConnectManager.stop、ProxySession.stop（reset 经 stop）、front_dispatcher.stop、BlockReceivePool.reset。</dd><dt>异常与外层锁</dt><dd>ProxySession.stop 用 finally 保证清理异常仍结算；接收池支持 defer_log，汇总在外层会话锁释放后写。</dd><dt>并发与构造</dt><dd>allow/flush 共用账本锁；接收池 reset 在原 self.lock 内取旧账并替换，构造器首次无旧账安全。</dd><dt>保留边界</dt><dd>http1 的 HEAD 是跨 worker 类级账本，没有安全全局终点，不在单个 worker.close 时清账；不增加后台脉冲。</dd><dt>业务边界</dt><dd>重试、Queue、状态迁移、notify、SN 更新、传输与响应路径不变；stop 后真实 retry 仍走 stopped 失败出口。</dd></dl>
-<div class="ok">初版六项及审查补充测试均先 RED 后 GREEN；独立审查三项 Important 已一轮修复。xlog 38/38、dispatcher 12/12、x_tunnel 14/14、SN 9/9，五套既有回归与 fd 探针通过。六文件已备份部署，cmp/SHA-256 一致；当前进程尚未重启，离线通过不等于生产已触发尾账。</div>
+<div class="ok">初版六项及审查补充测试均先 RED 后 GREEN；独立审查三项 Important 已一轮修复。xlog 38/38、dispatcher 12/12、x_tunnel 14/14、SN 9/9，五套既有回归与 fd 探针通过。六文件已备份部署并随新进程加载；本轮未发生带 suppressed 的目标 stop/reset，final 尚未触发。</div>
 </div></article>
 
 <article class="change" data-kind="logonly">
@@ -369,6 +369,7 @@ reset()
 <li>F：seley retry trace 846→3；reserved/frag 32,596→0；7 份日志 ERROR 合计 0。</li>
 <li>G：no-IP recovered 尾账闭环；HEAD 按前端聚合；代理 204、零新增 ERROR。</li>
 <li>H：_connect_ssl suppressed 与 no-IP total 1 已出现。</li>
+<li>K/L/M：PID 74385 于 21:10:26 启动；8086 代理 204，本轮无启动 ERROR，K 两类 NoneType 未复现。</li>
 </ul>
 </div>
 <div>
@@ -377,14 +378,14 @@ reset()
 <li>H DNS 退避：延长观察约 82 分钟未出现目标 errno，只记录未触发。</li>
 <li>I：离线 R1–R9、X1–X8 通过；重启后首批不同 transfer/kind 首报符合设计，尚无同 key 同窗聚合样例。</li>
 <li>J：离线 M1–M8 通过；重启后尚未出现 mark_sn_timeout，不能评估生产疗效。</li>
-<li>M：六项生命周期测试及完整回归通过；六文件已部署待重启，生产尾账尚未触发验证。</li>
+<li>M：六项生命周期测试及完整回归通过；已随新进程加载，本轮未发生带 suppressed 的目标 stop/reset，final 未触发。</li>
 <li>10MB 滚动：生产未触达阈值，由滚动测试覆盖。</li>
 </ul>
 </div>
 </div>
 <h3>明确保留或未修，不要误认为已完成</h3>
 <ul class="checklist">
-<li><strong>K/L/M 已部署、待重启：</strong>Smart Router 启动顺序、host=None、xlog.warning 与生命周期 flush 已完成离线验证；K/L/M 文件均已备份部署并完成 cmp/SHA-256 校验。重启后核对启动 ERROR、代理 204 与目标日志。</li>
+<li><strong>K/L/M 已部署并随 PID 74385 加载：</strong>21:10:26 启动，8086 代理 204；本轮未出现启动 ERROR，K 的两类 NoneType 未复现，L 的 host=None 与 M 的 final 目标事件未触发。无事件不等于疗效证明。</li>
 <li><code>req get response timeout</code>：当前四份 x_tunnel warning 日志及 I/J 重启后均为 0，未达到高频条件，本轮不做新增节流。</li>
 <li>微旱态降级、LogThrottle 后台脉冲、完整 episode 框架、全局 ERROR 限流：均未实施；M 只接真实生命周期终点，不做全局定时结算。</li>
 <li>上游 front 池质量、远端 handshake/connect timeout、check_update 网络不可达：不是本地日志补丁能够根治的项目。</li>
@@ -406,18 +407,18 @@ reset()
 <tr><td class="path">launcher/web_control.py</td><td>Web 路由/debug</td><td>no-module WARN→DEBUG；线程帧快照</td><td><span class="tag deployed">已部署</span></td></tr>
 <tr><td class="path">launcher/web_ui/status.html</td><td>状态页</td><td>按启用状态停止无效轮询</td><td><span class="tag deployed">已部署</span></td></tr>
 <tr><td class="path">x_tunnel/local/upload_logs.py</td><td>诊断收集</td><td>按启用状态过滤 URL</td><td><span class="tag deployed">已部署</span></td></tr>
-<tr><td class="path">smart_router/local/__init__.py</td><td>Smart Router 启动</td><td>DNS 查询与服务先于代理启动，消除 None 初始化窗口</td><td><span class="tag pending">K 待重启</span></td></tr>
+<tr><td class="path">smart_router/local/__init__.py</td><td>Smart Router 启动</td><td>DNS 查询与服务先于代理启动，消除 None 初始化窗口</td><td><span class="tag pending">K 本轮未复现</span></td></tr>
 <tr><td class="path">smart_router/local/dns_query.py</td><td>DoT/TCP/Local DNS</td><td>fd 修复、WARN 参数、nameserver INFO、DNS WARN/DEBUG 与退避</td><td><span class="tag deployed">已部署至 H</span></td></tr>
 <tr><td class="path">smart_router/local/dns_server.py</td><td>DNS 包处理</td><td>reserved/frag WARN→DEBUG</td><td><span class="tag deployed">已部署</span></td></tr>
 <tr><td class="path">smart_router/local/pipe_socks.py</td><td>非阻塞转发</td><td>selector DEBUG；send-block WARN/suppressed/final</td><td><span class="tag deployed">已部署</span></td></tr>
 <tr><td class="path">x_tunnel/local/tls_relay_front/ip_manager.py</td><td>front 池</td><td>IPv6 过滤与 skipped INFO</td><td><span class="tag deployed">已部署</span></td></tr>
-<tr><td class="path">lib/noarch/xlog.py</td><td>公共日志设施</td><td>warning_log 滚动、LogThrottle；L 修正 warning 委托；M flush</td><td><span class="tag pending">L/M 待生效</span></td></tr>
-<tr><td class="path">lib/noarch/front_base/connect_manager.py</td><td>建连与 front 资源</td><td>no-IP WARN/recovered；_connect_ssl WARN/suppressed；M stop 尾账</td><td><span class="tag pending">M 待重启</span></td></tr>
+<tr><td class="path">lib/noarch/xlog.py</td><td>公共日志设施</td><td>warning_log 滚动、LogThrottle；L 修正 warning 委托；M flush</td><td><span class="tag pending">L/M 已加载</span></td></tr>
+<tr><td class="path">lib/noarch/front_base/connect_manager.py</td><td>建连与 front 资源</td><td>no-IP WARN/recovered；_connect_ssl WARN/suppressed；M stop 尾账</td><td><span class="tag pending">M final 未触发</span></td></tr>
 <tr><td class="path">lib/noarch/front_base/http1.py</td><td>HTTP/1 worker</td><td>HEAD 三出口 WARN+trace，按 front IP 聚合；无全局 flush</td><td><span class="tag deployed">已部署至 G</span></td></tr>
-<tr><td class="path">lib/noarch/front_base/http_dispatcher.py</td><td>任务调度</td><td>retry/timeout/status 聚合；L host=None 防御；M stop 尾账</td><td><span class="tag pending">I 待疗效 / L/M 待生效</span></td></tr>
-<tr><td class="path">x_tunnel/local/proxy_session.py</td><td>会话与 transfer</td><td>ack/retry/roundtrip/failed 聚合；M stop 尾账</td><td><span class="tag pending">I 待疗效 / M 待重启</span></td></tr>
-<tr><td class="path">x_tunnel/local/front_dispatcher.py</td><td>x_tunnel front 调用</td><td>front retry 按 host+path 聚合；M stop 尾账</td><td><span class="tag pending">I 待疗效 / M 待重启</span></td></tr>
-<tr><td class="path">x_tunnel/local/base_container.py</td><td>下载接收池</td><td>mark_sn_timeout 按 SN 聚合；M reset 尾账</td><td><span class="tag pending">J 待疗效 / M 待重启</span></td></tr>
+<tr><td class="path">lib/noarch/front_base/http_dispatcher.py</td><td>任务调度</td><td>retry/timeout/status 聚合；L host=None 防御；M stop 尾账</td><td><span class="tag pending">I 待疗效 / L/M 已加载</span></td></tr>
+<tr><td class="path">x_tunnel/local/proxy_session.py</td><td>会话与 transfer</td><td>ack/retry/roundtrip/failed 聚合；M stop 尾账</td><td><span class="tag pending">I 待疗效 / M final 未触发</span></td></tr>
+<tr><td class="path">x_tunnel/local/front_dispatcher.py</td><td>x_tunnel front 调用</td><td>front retry 按 host+path 聚合；M stop 尾账</td><td><span class="tag pending">I 待疗效 / M final 未触发</span></td></tr>
+<tr><td class="path">x_tunnel/local/base_container.py</td><td>下载接收池</td><td>mark_sn_timeout 按 SN 聚合；M reset 尾账</td><td><span class="tag pending">J 待疗效 / M final 未触发</span></td></tr>
 </tbody></table></div>
 <p class="small">权威细节来源：<a href="XX-Net-macOS-ARM64-修复记录.md">XX-Net-macOS-ARM64-修复记录.md</a> 与 <a href="../Coding/XX-Net-5.16.7.1/LOCAL-VERSION.md">LOCAL-VERSION.md</a>。本总结覆盖至 M 阶段工作区，提交、部署与重启状态以第 2 节为准。</p>
 </section>
