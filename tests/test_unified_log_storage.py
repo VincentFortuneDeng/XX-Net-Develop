@@ -3,8 +3,10 @@
 import io
 import json
 import os
+import re
 import sys
 import tempfile
+import threading
 import types
 import unittest
 
@@ -160,6 +162,125 @@ class UnifiedLogStorageTests(unittest.TestCase):
         self.assertIn(b"BEGIN", tiny_raw)
         self.assertIn(b"END", tiny_raw)
         self.assertIn(b"bytes omitted", tiny_raw)
+    def test_c1_error_context_contains_recent_debug_info_but_not_warning(self):
+        logger = self.make_logger(startup=10)
+        logger.debug("debug clue")
+        logger.warning("warning not context")
+        logger.info("info clue")
+        logger.error("failed")
+        match = re.search(r"\[ERROR\] ERROR_CONTEXT_BEGIN\n(.*?)\[ERROR\] ERROR_CONTEXT_END\n",
+                          self.read_log(), re.S)
+        self.assertIsNotNone(match)
+        context = match.group(1)
+        self.assertIn("debug clue", context)
+        self.assertIn("info clue", context)
+        self.assertNotIn("warning not context", context)
+        self.assertNotIn("ERROR_CONTEXT", "".join(json.loads(logger.get_last_lines(20)).values()))
+
+    def test_c2_context_is_limited_to_40_complete_entries_and_16_kib(self):
+        logger = self.make_logger(startup=100, buffer_size=200)
+        for index in range(60):
+            logger.info("clue %02d %s", index, "界" * 100)
+        logger.error("failed")
+        context = re.search(r"ERROR_CONTEXT_BEGIN\n(.*?)ERROR_CONTEXT_END\n",
+                            self.read_log(), re.S).group(1)
+        self.assertEqual(len(re.findall(r" - \[INFO\] clue ", context)), 40)
+        self.assertNotIn("clue 19", context)
+        self.assertIn("clue 20", context)
+        self.assertIn("clue 59", context)
+        block = re.search(r"[^\n]*ERROR_CONTEXT_BEGIN\n.*?ERROR_CONTEXT_END\n",
+                          self.read_log(), re.S).group(0)
+        self.assertLessEqual(len(block.encode("utf-8")), 16 * 1024)
+        self.assertNotIn("bytes omitted", block)
+
+    def test_c3_same_template_cools_context_without_suppressing_error(self):
+        logger = self.make_logger(startup=10)
+        logger.info("clue")
+        logger.error("same template %s", "one")
+        logger.error("same template %s", "two")
+        content = self.read_log()
+        self.assertEqual(content.count("ERROR_CONTEXT_BEGIN"), 1)
+        self.assertEqual(content.count("[ERROR] same template one"), 1)
+        self.assertEqual(content.count("[ERROR] same template two"), 1)
+
+    def test_c4_different_templates_have_independent_cooldowns(self):
+        logger = self.make_logger(startup=10)
+        logger.info("clue")
+        logger.error("first template")
+        logger.error("second template")
+        self.assertEqual(self.read_log().count("ERROR_CONTEXT_BEGIN"), 2)
+
+    def test_c5_exception_has_one_context_block_and_one_stack(self):
+        logger = self.make_logger(startup=10)
+        logger.info("exception clue")
+        try:
+            raise ValueError("exception boom")
+        except ValueError:
+            logger.exception("operation failed")
+        content = self.read_log()
+        self.assertEqual(content.count("ERROR_CONTEXT_BEGIN"), 1)
+        self.assertEqual(content.count("Traceback (most recent call last)"), 1)
+        self.assertEqual(content.count("ValueError: exception boom"), 1)
+
+    def test_c6_critical_uses_the_same_context_contract(self):
+        logger = self.make_logger(startup=10)
+        logger.debug("critical clue")
+        logger.critical("critical failure")
+        content = self.read_log()
+        self.assertEqual(content.count("ERROR_CONTEXT_BEGIN"), 1)
+        self.assertIn("critical clue", content)
+        self.assertIn("[CRITICAL] critical failure", content)
+
+    def test_c7_multiline_context_and_traceback_remain_complete(self):
+        logger = self.make_logger(startup=10)
+        logger.info("context first\ncontext second")
+        try:
+            raise RuntimeError("multiline boom")
+        except RuntimeError:
+            logger.exception("failed")
+        content = self.read_log()
+        self.assertEqual(content.count("ERROR_CONTEXT_BEGIN"), 1)
+        self.assertIn("context first\ncontext second", content)
+        self.assertIn('raise RuntimeError("multiline boom")\nRuntimeError: multiline boom', content)
+
+    def test_c8_concurrent_blocks_do_not_interleave_or_renumber_memory(self):
+        logger = self.make_logger(startup=200, buffer_size=200)
+        logger.info("shared clue")
+        workers = [threading.Thread(target=logger.error, args=("failure template %d" % index,))
+                   for index in range(8)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        content = self.read_log()
+        self.assertEqual(content.count("ERROR_CONTEXT_BEGIN"), 8)
+        self.assertEqual(content.count("ERROR_CONTEXT_END"), 8)
+        for block in re.findall(r"ERROR_CONTEXT_BEGIN\n(.*?)ERROR_CONTEXT_END\n", content, re.S):
+            self.assertNotIn("ERROR_CONTEXT_BEGIN", block)
+        records = json.loads(logger.get_last_lines(200))
+        self.assertEqual(sorted(map(int, records)), list(range(1, 10)))
+
+    def test_c9_small_file_rolls_whole_context_and_keeps_error(self):
+        logger = self.make_logger(startup=100, buffer_size=100)
+        logger.persistent_file_max_size = 500
+        for index in range(10):
+            logger.info("rolling clue %d %s", index, "x" * 50)
+        logger.error("rolling error")
+        paths = [os.path.join(self.temp_dir.name, "mod.log"),
+                 os.path.join(self.temp_dir.name, "mod.log.1")]
+        contents = []
+        for path in paths:
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as log_file:
+                    contents.append(log_file.read())
+        self.assertTrue(contents)
+        self.assertIn("rolling error", "".join(contents))
+        self.assertEqual("".join(contents).count("ERROR_CONTEXT_BEGIN"), 1)
+        self.assertEqual("".join(contents).count("ERROR_CONTEXT_END"), 1)
+        for content in contents:
+            self.assertEqual(content.count("ERROR_CONTEXT_BEGIN"),
+                             content.count("ERROR_CONTEXT_END"))
+        self.assertLessEqual(max(map(len, [content.encode("utf-8") for content in contents])), 500)
 
 
 if __name__ == "__main__":

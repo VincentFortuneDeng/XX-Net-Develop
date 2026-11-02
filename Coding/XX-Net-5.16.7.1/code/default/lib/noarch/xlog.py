@@ -54,6 +54,7 @@ class Logger():
         self.persistent_log_fn = None
         self.persistent_fd = None
         self.persistent_file_max_size = 10 * 1024 * 1024
+        self.error_context_last = {}
 
         if log_path and os.path.exists(join(log_path, "keep_log.txt")):
             self.info("keep log")
@@ -202,6 +203,38 @@ class Logger():
             self.persistent_fd.write(data)
             self.persistent_fd.flush()
 
+    def _write_error_context(self, fmt):
+        if not self.persistent_log_fn:
+            return
+        now = time.time()
+        key = (self.name, fmt)
+        last_written = self.error_context_last.get(key)
+        if last_written is not None and now - last_written < 60:
+            return
+
+        candidates = [line for _, line in sorted(self.buffer.items())
+                      if " - [DEBUG] " in line or " - [INFO] " in line][-40:]
+        if not candidates:
+            return
+        time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:23]
+        begin = "%s - [ERROR] ERROR_CONTEXT_BEGIN\n" % time_str
+        end = "%s - [ERROR] ERROR_CONTEXT_END\n" % time_str
+        limit = min(16 * 1024, self.persistent_file_max_size)
+        fixed_size = len(begin.encode("utf-8")) + len(end.encode("utf-8"))
+        selected = []
+        selected_size = 0
+        for line in reversed(candidates):
+            line_size = len(line.encode("utf-8"))
+            if fixed_size + selected_size + line_size > limit:
+                continue
+            selected.append(line)
+            selected_size += line_size
+        if not selected:
+            return
+        selected.reverse()
+        self._write_persistent(begin + "".join(selected) + end)
+        self.error_context_last[key] = now
+
     def roll_log(self):
         for i in range(self.roll_num, 1, -1):
             new_name = "%s.%d" % (self.log_filename, i)
@@ -251,6 +284,8 @@ class Logger():
                     in_startup or persist or self.keep_log or full_log or
                     level in ["WARN", "WARNING", "ERROR", "CRITICAL"]):
                 self._write_persistent(string)
+                if level in ["ERROR", "CRITICAL"] and kwargs.get("include_context", True):
+                    self._write_error_context(fmt)
 
             if in_startup:
                 self.start_log_num += 1
@@ -299,7 +334,7 @@ class Logger():
 
     def exception(self, fmt, *args, **kwargs):
         self.error(fmt, *args, **kwargs)
-        self.error("Except stack:%s", traceback.format_exc(), **kwargs)
+        self.error("Except stack:%s", traceback.format_exc(), include_context=False, **kwargs)
 
     def critical(self, fmt, *args, **kwargs):
         if self.min_level > CRITICAL:
@@ -478,7 +513,7 @@ def error(fmt, *args, **kwargs):
 
 def exception(fmt, *args, **kwargs):
     error(fmt, *args, **kwargs)
-    error("Except stack:%s", traceback.format_exc(), **kwargs)
+    error("Except stack:%s", traceback.format_exc(), include_context=False, **kwargs)
 
 
 def critical(fmt, *args, **kwargs):
