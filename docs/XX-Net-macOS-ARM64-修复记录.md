@@ -816,3 +816,25 @@ I 阶段代码于 2026-10-29 完成，2026-10-31 已与 J 一并部署到 `/Appl
 - 本次 Smart Router 启动日志及重启后的 warning 日志中，ERROR、Traceback、K 两类 NoneType 与 L host=None 均为 0。代理 Server 正常启动，`stop resource after proxy startup failure` 为 0，故 **N 清理路径未触发**；离线测试、部署和正常启动均不能替代失败分支的生产疗效证据。
 - 独立事件统计暂不实施：M 已有真实 transfer final 证据，HEAD/异常退出的数量注解边界不值得为此引入全局脉冲。
 - 交付包与上游整理等待 N 重启后的稳定证据；既有 SocketWrap.close EBADF 是独立低频候选，后续先复现和分析 close 调用链，不与本轮混合。
+
+# O 阶段：统一日志存储与有界错误上下文（2026-11-02，开发完成未部署）
+## 范围与语义
+- 每个已有持久 Logger 只维护一份权威滚动正文 `<name>.log` 和单代 `.1`，主文件默认 10MiB，按 UTF-8 字节数写前滚动。旧 `start_log_*`、`*_warning.log*` 只读保留，不自动删除或覆盖；reset 仅 flush、关闭和重开，不删除历史或重置内存编号。
+- 启动详细期所有级别写正文；详细期后普通 DEBUG/INFO 默认仅内存，显式 `persist=True` 与 WARNING+ 持续落盘。`keep_log/full_log` 只延长详细持久化，仍受滚动上限约束。
+- 单条格式化日志上限 64KiB，同时不能超过当前文件上限；超限中部省略，保留合法 UTF-8 首尾和 bytes omitted 标记。
+- ERROR/CRITICAL 本体及 exception 堆栈不受上下文冷却影响。错误本体写完后，从同一 Logger 的现有内存 buffer 导出近期 DEBUG/INFO，最多 40 条、16KiB，同原始 fmt 模板冷却 60 秒；完整上下文块只写正文、不回填内存、不新增线程。exception 的 `Except stack` 段禁用第二次上下文，避免重复块。
+- 新增 `Logger.export_view(view, max_bytes)` 和七模块 `/log?cmd=export&view=startup|warning&max_bytes=N`；原 get_last/get_new 内存 JSON 保留。startup 默认 256KiB，warning 默认 512KiB；按 `.1`、主正文顺序读取，只保留完整 UTF-8 记录和完整上下文块。
+- 诊断包新增本进程视图收集，优先级为状态/配置→内存快照→视图→统一主正文→`.1`→显式 legacy；默认按未压缩内容计入 10MiB 预算，过大项跳过并继续较小候选。旧 start/warning 默认不入包，`client.json` 继续删除 `login_password`。
+- 仅八处既有生命周期 INFO 增加 `persist=True`：模块启动、停止与耗时，launcher 退出前停止，Smart Router 代理监听，X-Tunnel Socks5 监听、关闭和 session 停止。不新增日志语句，不改网络重试、路由、Queue、传输、DNS 或业务生命周期。
+
+## TDD 与验证
+- Task 1 U1–U8、Task 2 C1–C9、Task 3 V1–V9、Task 4 P1–P10 均先在旧实现取得目标 RED 后实现；Task 5 AST 契约先证明八处调用均缺少 `persist=True`，再只修改八行达到 GREEN。
+- 新回归：统一正文与上下文 **19/19**、视图 **10/10**、诊断包 **10/10**、生命周期契约 **1/1**。旧 xlog **38/38** 通过。
+- 计划完整回归通过：Smart Router S1–S4 与模块隔离、dispatcher R1–R12、x_tunnel X1–X14、SN M1–M9、DNS N1–N7，以及 DoT、竞态、IPv6、BlockIO、nameserver 过滤测试；fd 探针保持 **A(detached)**。
+- Smart Router 旧测试桩的 `info()` 只接受位置参数，首次完整回归因此在新增关键字处停止；仅把桩改为接受 `**kwargs` 后重跑，全部通过。该失败发生在测试替身，不是生产 Logger 接口失败。
+- 独立全差异审查发现一项 Critical、两项 Important，均在一轮修复中先取得目标 RED 再 GREEN：① C10 以预填充正文、长堆栈和 500 字节小上限稳定复现 exception 三次写入导致 ERROR 本体被第二代滚动淘汰，改为先写附加上下文、再写 ERROR 本体，使后续堆栈滚动优先淘汰上下文。② V10 证明上下文块误占启动条数预算，改为只统计真实启动记录，上下文不消耗 `save_start_log`。③ U9 复现首次打开不存在目录时构造抛出 FileNotFoundError，改为降级 `persistent_fd=None`，内存和管理页继续工作，reset 可恢复持久写入。
+- 两项 Minor 记录延后：动态 fmt 的 `error_context_last` 缺少过期清理与固定键数上限；仅测试可用的极小文件上限小于省略标记时，中省略结果可能超过该上限。未进行第二轮 re-review。
+- 全部修改 Python 文件 `py_compile` 与 `git diff --check ca93de4..HEAD` 通过；HTMLParser 验证 **23 张 change 卡**、ID 唯一、全部页内锚点可解析。
+
+## 生效边界
+- 当前状态为**开发完成、未部署、未重启、未 push**。以上仅为离线测试与静态检查，不是生产疗效；O 的文件布局、冷却、视图和诊断包行为需在实际部署重启后按真实事件验证。

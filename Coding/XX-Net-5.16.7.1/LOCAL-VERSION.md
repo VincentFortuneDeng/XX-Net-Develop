@@ -18,7 +18,7 @@
 | `code/default/launcher/lang/zh_CN/LC_MESSAGES/messages.po` | 补充 15+ 条缺失中文翻译（问题二） |
 | `code/default/smart_router/lang/zh_CN/LC_MESSAGES/messages.po` | 同上（问题二） |
 | `code/default/launcher/web_ui/status.html` | 系统信息标签 i18n 包裹（问题二）；根修：`loadModuleEnableFlags()` 拉 `GET /config?cmd=get_config`，gae_proxy 未启用时 updateDetailStatus / updateNoobStatus / OneKeyReport 跳过轮询（E 前置根修） |
-| `code/default/x_tunnel/local/upload_logs.py` | 根修：`get_module_enable_flags()` 按启用状态过滤 debug/log 轮询条目（失败安全：拉取失败保持原全量轮询） |
+| `code/default/x_tunnel/local/upload_logs.py` | 根修：`get_module_enable_flags()` 按启用状态过滤 debug/log 轮询条目（失败安全：拉取失败保持原全量轮询）。O 阶段：按需收集七模块 startup/warning 视图，诊断包按状态/配置→内存快照→视图→统一正文→`.1`→显式 legacy 排序，默认未压缩预算 10MiB，大项跳过继续，旧日志默认排除 |
 | `code/default/smart_router/local/__init__.py` | K 阶段：将 `g.local_ips`、`g.dns_query` 与 `g.dns_srv` 初始化前移到 `proxy_server.start()` 之前，消除启动首请求访问 None DNS 查询对象或 UDP 中继的竞态；代理/DNS 地址分离，端口参数与业务逻辑不变。N 阶段：代理 Server 构造/启动失败时按逆序尝试清理 DNS、PipeSocks 与 ConnectManager，清理异常不遮蔽原启动异常，ready=False；正常启动与 stop 不变 |
 | `code/default/smart_router/local/dns_query.py` | 四项修复 1：DoT `connect` 判空（B1/B2：close 保留 + 注释实证、基类 direct_connect fd 泄漏与日志参数修复、代理路径 connect 失败 close）；E 阶段：`_is_usable_nameserver()` nameserver 过滤（拒 fe80::/10、fc00::/7、::1、ff00::/8，放行 IPv4 与全球单播 v6）+ get_local_dns_server 过滤前移与兔底；H 阶段：EHOSTUNREACH/ENETUNREACH per-nameserver 60s 退避，冷却跳过、全冷却最早到期单点 fail-open、重复失败不延长、成功清账 |
 | `code/default/smart_router/local/pipe_socks.py` | 四项修复 2+4：`try_add` fd 竞态（fileno 预检 + ValueError/KeyError DEBUG）；BlockingIOError 限流 `warn_send_block`（同 socket 每秒 1 条 + suppressed 聚合）；B3 try_remove 对称处理；B6 close 时补打 final 并清账 |
@@ -39,6 +39,10 @@
 | `../../tests/test_mark_sn_timeout_throttle.py` | J+M 阶段接收池离线测试：同 SN 聚合且状态更新、不同 SN/池实例独立、跨窗 suppressed、reset 后同号 SN 首报、20 线程单 WARN 且保存最大 t、静默旧事件不消耗窗口、reset/mark 可控交错保证新生命周期首报、reset 尾账单次结算 = 9/9 PASS |
 | `../../tests/test_smart_router_startup_race.py` | K+N 阶段启动离线测试：S1/S2 覆盖启动即收到域名请求与 UDP ASSOCIATE；S3/S4 覆盖代理启动失败后的逆序资源清理、清理异常隔离与原异常保留；执行前后恢复应用模块替身，避免同进程测试污染 |
 | `../../tests/test_smart_router_startup_test_isolation.py` | N 阶段测试隔离回归：在同一进程用 runpy 执行真实启动竞态脚本，断言 env_info/xlog 等原有模块对象及 Smart Router 模块表恢复；普通标准库导入允许保留 |
+| `../../tests/test_unified_log_storage.py` | O 阶段统一正文与错误上下文：U1–U9、C1–C10，共 19/19 PASS |
+| `../../tests/test_log_view_export.py` | O 阶段 startup/warning 视图、损坏记录与七模块 Web 走线：V1–V10，共 10/10 PASS |
+| `../../tests/test_log_diagnostic_pack.py` | O 阶段视图收集、禁用模块零请求、预算、优先级、脱敏和 legacy 边界：P1–P10，共 10/10 PASS |
+| `../../tests/test_persistent_lifecycle_logs.py` | O 阶段 AST 契约：只允许八处指定生命周期 INFO 使用 `persist=True` |
 
 ## 修复阶段索引（详见 docs/XX-Net-macOS-ARM64-修复记录.md）
 
@@ -56,6 +60,7 @@
 - **L 阶段（剩余推荐错误修复，2026-10-31，已部署并重启）**：dispatcher 默认诊断 URL 对 `host=None` 使用 `<unknown>`，不改变 task host、重试或响应；顶层 `xlog.warning()` 修正为 `default_log.warn()`。R10 与 B9 均先按目标 RED 再 GREEN，dispatcher 10/10、xlog 34/34，完整回归通过。`req get response timeout` 当前生产日志及 I/J 重启后均 0，按证据不做新增节流；尾账推荐有明确生命周期时用 flush，不引入全局后台脉冲。已随 K/M 重启加载，本轮未触发 host=None 目标路径
 - **M 阶段（生命周期尾账结算，2026-10-31，已部署并重启）**：`LogThrottle.flush()` 原子结算、清账并封口，`reset()` 开启新生命周期；接入 dispatcher、ConnectManager、ProxySession、BlockReceivePool.reset 与 front_dispatcher.stop，每个对象最多一条汇总 WARN，不逐 key、不后台线程。独立审查三项 Important（stop 后迟到事件、外层锁内日志、清理异常跳过结算）均一轮 RED→GREEN 修复；xlog 38/38、dispatcher 12/12、x_tunnel 14/14、SN 9/9，完整回归通过；http1 类级 HEAD 账本没有安全全局终点，保持现状。已随 K/L 重启加载；约 20 小时生产观察已出现 16 条 transfer final 聚合尾账，证明真实 stop/reset 终点可落盘，其余终点按实际事件继续观察
 - **N 阶段（启动失败清理与测试隔离，2026-11-01，已部署并重启）**：代理 Server 构造/启动失败时按 `dns_srv → dns_query → pipe_socks → connect_manager` 各尝试 stop，清理异常写日志但不遮蔽原始异常，ready=False；正常 K 启动顺序与正常 stop 不变。S3/S4 与独立 sys.modules 隔离回归均 RED→GREEN，S1–S4、xlog 38/38、dispatcher 12/12、x_tunnel 14/14、SN 9/9、DNS 9/9、五套既有回归与 fd 探针通过。2026-11-01 19:28 仅部署 `smart_router/local/__init__.py`，备份于 `backups/pre-rsync-20261101-n/`；部署 cmp 一致，SHA-256 为 `335f2090b3b525a98c4e679c0db1ea79411ef026cfb1f39a71c1687846fd14a8`。用户重启后 PID 43995（19:33:14）加载，8086 LISTEN；首次代理请求 20 秒超时，随后两次 generate_204 均 204。启动日志 ERROR/Traceback 为 0，代理正常启动，N 清理路径未触发，未 push
+- **O 阶段（统一日志存储与有界错误上下文，2026-11-02，开发完成未部署）**：每个已有持久 Logger 统一写 `<name>.log`，仅保留单代 `.1`；启动详细期后普通 DEBUG/INFO 仅内存，重要项可 `persist=True`，WARNING+ 持续落盘。ERROR/CRITICAL 从同一内存 buffer 导出近期 DEBUG/INFO，最多 40 条、16KiB、同原始 fmt 冷却 60 秒，本体和 exception 堆栈不受冷却影响。新增 startup/warning 按需视图，诊断包按明确优先级与 10MiB 未压缩预算装包；仅八处生命周期 INFO 显式持久化。新测试 U/C 19、V 10、P 10、生命周期契约 1 项均通过，旧 xlog 38/38 与计划完整回归通过，fd 探针 A(detached)。独立审查一项 Critical、两项 Important 均一轮 RED→GREEN 修复。未部署、未重启、未 push，不宣称生产疗效。
 
 ## 已知评估后接受项
 
