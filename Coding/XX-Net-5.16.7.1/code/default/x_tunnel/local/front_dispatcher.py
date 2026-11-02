@@ -223,14 +223,15 @@ def set_session_host(host):
 def stop():
     global all_fronts, light_fronts, session_fronts, cloudflare_front
 
-    for front in all_fronts:
-        front.stop()
+    try:
+        for front in all_fronts:
+            front.stop()
 
-    all_fronts = []
-    light_fronts = []
-    session_fronts = []
-    cloudflare_front = None
-
-    suppressed, key_count = front_retry_log_throttle.flush()
-    if suppressed:
-        xlog.warn("front retry final suppressed:%d keys:%d", suppressed, key_count)
+        all_fronts = []
+        light_fronts = []
+        session_fronts = []
+        cloudflare_front = None
+    finally:
+        suppressed, key_count = front_retry_log_throttle.flush()
+        if suppressed:
+            xlog.warn("front retry final suppressed:%d keys:%d", suppressed, key_count)

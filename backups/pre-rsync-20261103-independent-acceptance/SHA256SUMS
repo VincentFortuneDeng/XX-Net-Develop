@@ -1,0 +1,6 @@
+e9f35a537a72d7742e2cc056671bd050baab520f9f1eb687d57395afb3be0981  code/default/lib/noarch/front_base/http_dispatcher.py.orig
+27c22573838556106aaf0d45acddaabcdeca982fe8d040343153f991539c4d48  code/default/lib/noarch/xlog.py.orig
+a6c797e750492dbdb419db4bb30c963d204088febc0ca80f44da254da1cf5460  code/default/smart_router/local/dns_query.py.orig
+663d17b3820a7c231051d744e6f59acd4e07638b7f842d18b3e099e29ebd243f  code/default/smart_router/local/pipe_socks.py.orig
+e172e682a286aaba0f184a35b11386f3de984a827a83adea694982c1f63f6ae0  code/default/x_tunnel/local/front_dispatcher.py.orig
+9142b95b4aedf0d0e8c96aba4c71510e41b9e359053d13ba73c8703d9c180efa  code/default/x_tunnel/local/upload_logs.py.orig

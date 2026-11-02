@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>XX-Net 5.16.7.1 系统架构逻辑图</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'JetBrains Mono', monospace; background: #020617; min-height: 100vh; padding: 2rem; color: white; }
+    .container { max-width: 1440px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; flex-shrink: 0; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; line-height: 1.7; }
+    .diagram-container { background: rgba(15, 23, 42, 0.5); border-radius: 1rem; border: 1px solid #1e293b; padding: 1.5rem; overflow-x: auto; }
+    svg { width: 100%; min-width: 1100px; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 2rem; }
+    .card { background: rgba(15, 23, 42, 0.5); border-radius: 0.75rem; border: 1px solid #1e293b; padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; line-height: 1.65; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; line-height: 1.7; }
+    .toolbar { display: flex; gap: 0.5rem; margin-left: auto; flex-shrink: 0; align-items: center; }
+    .toolbar-toggle { background: transparent; border: none; color: #475569; cursor: pointer; font-size: 1.25rem; line-height: 1; padding: 0.25rem 0.5rem; border-radius: 0.375rem; transition: color 0.2s, background 0.2s; }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
+    .toolbar-actions { display: none; gap: 0.5rem; }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button { background: rgba(30, 41, 59, 0.8); border: 1px solid #334155; color: #94a3b8; padding: 0.375rem 0.75rem; border-radius: 0.375rem; font-family: inherit; font-size: 0.75rem; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+    .toolbar-actions button:hover { background: rgba(51, 65, 85, 0.8); color: white; border-color: #475569; }
+    @media print { body { background: #020617; padding: 1rem; } .toolbar { display: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="container" id="report-container">
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>XX-Net 5.16.7.1 系统架构</h1>
+        <div class="toolbar">
+          <div class="toolbar-actions">
+            <button onclick="copyAsImage(this)">📋 Copy</button>
+            <button onclick="downloadPNG(this)">🖼️ PNG</button>
+            <button onclick="downloadPDF(this)">📄 PDF</button>
+          </div>
+          <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="导出选项" aria-label="导出选项">⋯</button>
+        </div>
+      </div>
+      <p class="subtitle">单 Python 进程 · 本地应用代理 · 智能分流 · 多前端可靠会话 · 控制流 / 数据流分离</p>
+    </div>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1400 960" role="img" aria-labelledby="diagram-title diagram-desc">
+        <title id="diagram-title">XX-Net 系统架构逻辑图</title>
+        <desc id="diagram-desc">本机 Launcher、Smart Router、X-Tunnel 和可选 GAE 与远端会话服务、AppEngine、目标站之间的控制和数据流。</desc>
+        <defs>
+          <marker id="arrow-cyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/></marker>
+          <marker id="arrow-emerald" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#34d399"/></marker>
+          <marker id="arrow-rose" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#fb7185"/></marker>
+          <marker id="arrow-slate" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8"/></marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/></pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid)"/>
+
+        <!-- 区域边界 -->
+        <rect x="30" y="35" width="880" height="780" rx="12" fill="rgba(34,211,238,0.025)" stroke="#22d3ee" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="50" y="59" fill="#22d3ee" font-size="12" font-weight="600">本机 / 单 Python 进程（模块以线程运行）</text>
+        <rect x="950" y="35" width="410" height="780" rx="12" fill="rgba(251,191,36,0.025)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="970" y="59" fill="#fbbf24" font-size="12" font-weight="600">远端服务 / 互联网</text>
+
+        <!-- 连线先画，随后由不透明组件遮住穿线 -->
+        <!-- 应用接入 -->
+        <path d="M 265 155 H 350" fill="none" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow-cyan)"/>
+        <text x="307" y="144" fill="#94a3b8" font-size="9" text-anchor="middle">SOCKS / HTTP</text>
+        <path d="M 170 195 V 360 H 348" fill="none" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrow-cyan)"/>
+        <text x="180" y="346" fill="#94a3b8" font-size="9">也可直接使用 :1080</text>
+
+        <!-- Launcher 控制流 -->
+        <path d="M 275 305 H 315 V 215 H 350" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrow-rose)"/>
+        <path d="M 275 335 H 315 V 405 H 348" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrow-rose)"/>
+        <path d="M 275 365 H 310 V 605 H 348" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrow-rose)"/>
+        <text x="286" y="291" fill="#fb7185" font-size="8">启动 / 配置 / 日志</text>
+
+        <!-- Smart Router 分流 -->
+        <path d="M 470 215 V 338" fill="none" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow-cyan)"/>
+        <text x="482" y="269" fill="#94a3b8" font-size="9">socks 规则</text>
+        <text x="482" y="283" fill="#64748b" font-size="8">直接调用 ProxySession</text>
+        <path d="M 470 495 V 568" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrow-slate)"/>
+        <text x="482" y="535" fill="#94a3b8" font-size="9">gae 规则（可选）</text>
+
+        <!-- Direct 到目标 -->
+        <path d="M 590 155 H 925 V 725 H 1068" fill="none" stroke="#34d399" stroke-width="2" marker-end="url(#arrow-emerald)"/>
+        <text x="900" y="540" fill="#34d399" font-size="9" text-anchor="end">direct：DNS + ConnectManager + PipeSocks</text>
+
+        <!-- DNS 与规则 -->
+        <path d="M 590 190 H 618 V 200 H 650" fill="none" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrow-slate)"/>
+        <text x="619" y="181" fill="#a78bfa" font-size="8" text-anchor="middle">解析</text>
+
+        <!-- X-Tunnel 到 fronts -->
+        <path d="M 590 405 H 675" fill="none" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow-cyan)"/>
+        <text x="632" y="394" fill="#94a3b8" font-size="9" text-anchor="middle">POST /data</text>
+        <path d="M 855 405 H 925 V 355 H 1068" fill="none" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow-cyan)"/>
+        <text x="958" y="344" fill="#94a3b8" font-size="9" text-anchor="middle">HTTPS / TLS</text>
+
+        <!-- X-Tunnel 会话到目标 -->
+        <path d="M 1155 425 V 688" fill="none" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow-cyan)"/>
+        <text x="1167" y="555" fill="#94a3b8" font-size="9">按 conn_id 访问目标</text>
+
+        <!-- GAE 到 AppEngine -->
+        <path d="M 590 625 H 1068" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6,5" marker-end="url(#arrow-slate)"/>
+        <text x="825" y="614" fill="#94a3b8" font-size="9" text-anchor="middle">GoAgent 打包 → /_gh/（当前链路未启用）</text>
+        <path d="M 1155 655 V 688" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6,5" marker-end="url(#arrow-slate)"/>
+
+        <!-- front_base 支撑关系 -->
+        <path d="M 275 680 H 640 V 510 H 675" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="4,4" marker-end="url(#arrow-slate)"/>
+        <text x="505" y="669" fill="#a78bfa" font-size="8" text-anchor="middle">IP / TLS / 连接池 / H1 / H2 / 评分</text>
+
+        <!-- 本机组件：应用 -->
+        <rect x="65" y="115" width="200" height="80" rx="6" fill="#0f172a"/>
+        <rect x="65" y="115" width="200" height="80" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="165" y="142" fill="white" font-size="13" font-weight="600" text-anchor="middle">浏览器 / 应用</text>
+        <text x="165" y="162" fill="#94a3b8" font-size="10" text-anchor="middle">SOCKS4/5 · HTTP · CONNECT</text>
+        <text x="165" y="179" fill="#64748b" font-size="9" text-anchor="middle">PAC 或显式代理配置</text>
+
+        <!-- Launcher -->
+        <rect x="65" y="265" width="210" height="125" rx="6" fill="#0f172a"/>
+        <rect x="65" y="265" width="210" height="125" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="170" y="291" fill="white" font-size="13" font-weight="600" text-anchor="middle">Launcher 控制面</text>
+        <text x="170" y="313" fill="#fda4af" font-size="11" text-anchor="middle">127.0.0.1:8085</text>
+        <text x="170" y="335" fill="#94a3b8" font-size="9" text-anchor="middle">Web UI / API · 配置 · 更新</text>
+        <text x="170" y="352" fill="#94a3b8" font-size="9" text-anchor="middle">模块生命周期 · 托盘</text>
+        <text x="170" y="372" fill="#fb7185" font-size="9" text-anchor="middle">不承载业务代理流量</text>
+
+        <!-- Smart Router -->
+        <rect x="350" y="105" width="240" height="110" rx="6" fill="#0f172a"/>
+        <rect x="350" y="105" width="240" height="110" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="2"/>
+        <text x="470" y="132" fill="white" font-size="14" font-weight="600" text-anchor="middle">Smart Router</text>
+        <text x="470" y="153" fill="#67e8f9" font-size="11" text-anchor="middle">127.0.0.1:8086 · 当前启用</text>
+        <text x="470" y="175" fill="#94a3b8" font-size="9" text-anchor="middle">协议识别 · PAC · DoH / DNS / UDP</text>
+        <text x="470" y="193" fill="#94a3b8" font-size="9" text-anchor="middle">用户规则 → 缓存 / 名单 → 回退</text>
+
+        <!-- DNS -->
+        <rect x="650" y="125" width="205" height="95" rx="6" fill="#0f172a"/>
+        <rect x="650" y="125" width="205" height="95" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="752" y="150" fill="white" font-size="12" font-weight="600" text-anchor="middle">DNS / 规则与缓存</text>
+        <text x="752" y="171" fill="#94a3b8" font-size="9" text-anchor="middle">UDP / TCP / DoT / DoH JSON</text>
+        <text x="752" y="189" fill="#94a3b8" font-size="9" text-anchor="middle">域名、IP、地区与历史质量</text>
+        <text x="752" y="207" fill="#a78bfa" font-size="8" text-anchor="middle">过滤 · 退避 · fail-open</text>
+
+        <!-- X-Tunnel -->
+        <rect x="350" y="340" width="240" height="155" rx="6" fill="#0f172a"/>
+        <rect x="350" y="340" width="240" height="155" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="2"/>
+        <text x="470" y="367" fill="white" font-size="14" font-weight="600" text-anchor="middle">X-Tunnel</text>
+        <text x="470" y="389" fill="#6ee7b7" font-size="11" text-anchor="middle">127.0.0.1:1080 · 当前启用</text>
+        <text x="470" y="413" fill="#94a3b8" font-size="9" text-anchor="middle">SOCKS / HTTP / CONNECT（TCP）</text>
+        <text x="470" y="434" fill="#94a3b8" font-size="9" text-anchor="middle">session_id · conn_id · transfer_no</text>
+        <text x="470" y="453" fill="#94a3b8" font-size="9" text-anchor="middle">SendBuffer · SN / ACK · 超时重传</text>
+        <text x="470" y="474" fill="#34d399" font-size="9" text-anchor="middle">Roundtrip workers · ReceivePool 重组</text>
+
+        <!-- Front Dispatcher -->
+        <rect x="675" y="270" width="180" height="240" rx="6" fill="#0f172a"/>
+        <rect x="675" y="270" width="180" height="240" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="765" y="296" fill="white" font-size="12" font-weight="600" text-anchor="middle">Front Dispatcher</text>
+        <text x="765" y="315" fill="#fbbf24" font-size="9" text-anchor="middle">按 score 选择传输前端</text>
+        <rect x="695" y="335" width="140" height="36" rx="4" fill="#0f172a" stroke="#fbbf24" stroke-width="1"/>
+        <text x="765" y="358" fill="#fde68a" font-size="10" text-anchor="middle">Cloudflare · 默认开</text>
+        <rect x="695" y="383" width="140" height="36" rx="4" fill="#0f172a" stroke="#fbbf24" stroke-width="1"/>
+        <text x="765" y="406" fill="#fde68a" font-size="10" text-anchor="middle">Seley · 默认开</text>
+        <rect x="695" y="431" width="140" height="36" rx="4" fill="#0f172a" stroke="#fbbf24" stroke-width="1"/>
+        <text x="765" y="454" fill="#fde68a" font-size="10" text-anchor="middle">TLS Relay · 默认开</text>
+        <text x="765" y="489" fill="#94a3b8" font-size="8" text-anchor="middle">CloudFront / GAE / Direct 可配置</text>
+
+        <!-- GAE -->
+        <rect x="350" y="570" width="240" height="110" rx="6" fill="#0f172a"/>
+        <rect x="350" y="570" width="240" height="110" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6,4"/>
+        <text x="470" y="597" fill="#cbd5e1" font-size="13" font-weight="600" text-anchor="middle">GAE Proxy（可选）</text>
+        <text x="470" y="619" fill="#94a3b8" font-size="11" text-anchor="middle">默认 :8087 · 当前禁用</text>
+        <text x="470" y="641" fill="#94a3b8" font-size="9" text-anchor="middle">本地 CA MITM · GoAgent 打包</text>
+        <text x="470" y="660" fill="#64748b" font-size="9" text-anchor="middle">AppID · Range 分片 · Direct fallback</text>
+
+        <!-- front_base -->
+        <rect x="65" y="620" width="210" height="105" rx="6" fill="#0f172a"/>
+        <rect x="65" y="620" width="210" height="105" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="170" y="647" fill="white" font-size="12" font-weight="600" text-anchor="middle">共享 front_base</text>
+        <text x="170" y="669" fill="#94a3b8" font-size="9" text-anchor="middle">IP Source / Manager · TLS</text>
+        <text x="170" y="687" fill="#94a3b8" font-size="9" text-anchor="middle">连接池 · HTTP/1.1 / HTTP/2</text>
+        <text x="170" y="707" fill="#a78bfa" font-size="9" text-anchor="middle">健康反馈 · 重试 · 日志</text>
+
+        <!-- 远端会话服务 -->
+        <rect x="1070" y="285" width="170" height="140" rx="6" fill="#0f172a"/>
+        <rect x="1070" y="285" width="170" height="140" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="1155" y="313" fill="white" font-size="13" font-weight="600" text-anchor="middle">X-Tunnel</text>
+        <text x="1155" y="333" fill="white" font-size="13" font-weight="600" text-anchor="middle">会话服务</text>
+        <text x="1155" y="356" fill="#fde68a" font-size="10" text-anchor="middle">登录与 /data</text>
+        <text x="1155" y="378" fill="#94a3b8" font-size="9" text-anchor="middle">连接复用 · 排序 / ACK</text>
+        <text x="1155" y="398" fill="#94a3b8" font-size="9" text-anchor="middle">目标连接与数据回传</text>
+
+        <!-- AppEngine -->
+        <rect x="1070" y="585" width="170" height="70" rx="6" fill="#0f172a"/>
+        <rect x="1070" y="585" width="170" height="70" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6,4"/>
+        <text x="1155" y="613" fill="#cbd5e1" font-size="12" font-weight="600" text-anchor="middle">AppEngine /_gh/</text>
+        <text x="1155" y="636" fill="#94a3b8" font-size="9" text-anchor="middle">解包 + urlfetch（可选）</text>
+
+        <!-- 目标站 -->
+        <rect x="1070" y="690" width="170" height="70" rx="6" fill="#0f172a"/>
+        <rect x="1070" y="690" width="170" height="70" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="1155" y="718" fill="white" font-size="13" font-weight="600" text-anchor="middle">目标网站 / 服务</text>
+        <text x="1155" y="741" fill="#94a3b8" font-size="9" text-anchor="middle">Direct 或远端代理出口</text>
+
+        <!-- Legend：位于所有区域边界之外 -->
+        <text x="45" y="855" fill="white" font-size="11" font-weight="600">图例</text>
+        <line x1="95" y1="851" x2="135" y2="851" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow-cyan)"/>
+        <text x="145" y="855" fill="#94a3b8" font-size="9">X-Tunnel / 代理数据流</text>
+        <line x1="315" y1="851" x2="355" y2="851" stroke="#34d399" stroke-width="2" marker-end="url(#arrow-emerald)"/>
+        <text x="365" y="855" fill="#94a3b8" font-size="9">Direct 数据流</text>
+        <line x1="490" y1="851" x2="530" y2="851" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrow-rose)"/>
+        <text x="540" y="855" fill="#94a3b8" font-size="9">管理控制流</text>
+        <line x1="665" y1="851" x2="705" y2="851" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrow-slate)"/>
+        <text x="715" y="855" fill="#94a3b8" font-size="9">可选 / 当前禁用链路</text>
+        <rect x="920" y="843" width="18" height="12" rx="2" fill="rgba(120,53,15,0.3)" stroke="#fbbf24"/>
+        <text x="947" y="854" fill="#94a3b8" font-size="9">远端 / 前端服务</text>
+        <rect x="1090" y="843" width="18" height="12" rx="2" fill="rgba(76,29,149,0.4)" stroke="#a78bfa"/>
+        <text x="1117" y="854" fill="#94a3b8" font-size="9">共享基础能力</text>
+
+        <text x="45" y="895" fill="#64748b" font-size="9">当前主链路：应用 → Smart Router:8086 → Direct 或 X-Tunnel → 目标站；Launcher:8085 仅承担管理。</text>
+        <text x="45" y="918" fill="#64748b" font-size="9">X-Tunnel 的 1080 是独立入口；Smart Router 可直接调用 ProxySession.create_conn()，不必先经过 1080。</text>
+        <text x="45" y="941" fill="#475569" font-size="8">源码快照：Coding/XX-Net-5.16.7.1 · 状态依据 2026-11-03 已核验配置 · 可选能力不等于当前已启用。</text>
+      </svg>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-header"><div class="card-dot cyan"></div><h3>接入与分流</h3></div>
+        <ul>
+          <li>• 8086 统一识别 SOCKS、HTTP、CONNECT</li>
+          <li>• 用户规则、历史缓存、名单与 IP 地区共同决策</li>
+          <li>• direct / socks / gae 形成候选列表并依次回退</li>
+          <li>• DNS、DoH、DoT 与 UDP 是独立辅助能力</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-dot emerald"></div><h3>X-Tunnel 可靠会话</h3></div>
+        <ul>
+          <li>• conn_id 映射本地 TCP 连接，SN 排序与确认</li>
+          <li>• transfer_no 跟踪 HTTPS 往返及超时重试</li>
+          <li>• 多 roundtrip worker 共享 ProxySession</li>
+          <li>• 多 front 只负责传输适配，最终进入会话服务</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-dot violet"></div><h3>边界与当前状态</h3></div>
+        <ul>
+          <li>• 单进程多线程模块，不是微服务集群</li>
+          <li>• 8085 是管理面，不是业务代理端口</li>
+          <li>• GAE 代码保留但当前禁用；1080 不支持 UDP</li>
+          <li>• front TLS 与可选应用层加密是不同层次</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">XX-Net 5.16.7.1 · 项目原理与系统架构 · 基于当前仓库真实源码整理</p>
+  </div>
+
+  <script>
+    async function copyAsImage(btn) {
+      const orig = btn.textContent;
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = '✓ Copied!';
+      } catch (e) { btn.textContent = '✗ Failed'; }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPNG(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const link = document.createElement('a');
+        link.download = 'xx-net-system-architecture.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        btn.textContent = '✓ Done!';
+      } catch (e) { btn.textContent = '✗ Failed'; }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPDF(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save('xx-net-system-architecture.pdf');
+        btn.textContent = '✓ Done!';
+      } catch (e) { btn.textContent = '✗ Failed'; }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+  </script>
+</body>
+</html>

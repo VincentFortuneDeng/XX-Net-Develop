@@ -1,0 +1,24 @@
+--- production-before/code/default/smart_router/local/pipe_socks.py
++++ development-after/code/default/smart_router/local/pipe_socks.py
+@@ -172,11 +172,18 @@
+             else:
+                 xlog.error("unknown list %s", l)
+         except ValueError as e:
+-            # symmetric to try_add: socket closed between set membership and
+-            # unregister/modify -> invalid fd. Harmless race, drop the remove.
++            # The selector is already detached; the local membership set must
++            # still converge or a closed socket remains visible to stop/pipe.
++            if l == "READ":
++                self.read_set.discard(s)
++            elif l == "WRITE":
++                self.write_set.discard(s)
+             xlog.debug("try_remove %s race, fd closed during unregister:%r", s, e)
+         except KeyError as e:
+-            # socket already unregistered by a concurrent path. Harmless race.
++            if l == "READ":
++                self.read_set.discard(s)
++            elif l == "WRITE":
++                self.write_set.discard(s)
+             xlog.debug("try_remove %s not registered:%r", s, e)
+         except Exception as e:
+             # keep full alarm for anything else; ValueError/KeyError above are

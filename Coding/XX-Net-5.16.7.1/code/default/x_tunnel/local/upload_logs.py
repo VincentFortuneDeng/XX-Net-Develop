@@ -42,8 +42,9 @@ def mask_x_tunnel_password(fp):
             dat_str = json.dumps(dat)
             return dat_str
         except Exception as e:
-            xlog.exception("mask_x_tunnel_password fail, %s, content:%s e:%r", fp, content, e)
-            return content
+            # 无法确认已脱敏时既不回传配置正文，也不在日志中复制正文。
+            xlog.exception("mask_x_tunnel_password fail, %s e:%r", fp, e)
+            return ""
 
 
 def get_launcher_port():
