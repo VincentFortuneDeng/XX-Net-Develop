@@ -5,6 +5,7 @@ from datetime import datetime
 import traceback
 import threading
 import json
+import re
 import shutil
 from os.path import join
 
@@ -49,7 +50,7 @@ class Logger():
         self.save_warning_log = save_warning_log
         self.save_persistent_log = save_persistent_log
         self.start_log_num = 0
-        self.boot_started_at = time.time()
+        self.boot_started_at = int(time.time() * 1000) / 1000.0
         self.startup_verbose_ended_at = None if save_start_log else self.boot_started_at
         self.persistent_log_fn = None
         self.persistent_fd = None
@@ -342,6 +343,84 @@ class Logger():
         self.log('CRITICAL', self.err_color, 'D7DF01', fmt, *args, **kwargs)
 
     # =================================================================
+    def export_view(self, view, max_bytes):
+        if view not in ("startup", "warning") or \
+                not isinstance(max_bytes, int) or max_bytes <= 0:
+            self.warning("invalid log export view:%r max_bytes:%r", view, max_bytes)
+            return ""
+        if not self.persistent_log_fn:
+            return ""
+
+        record_start = re.compile(
+            rb'(?m)^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} - '
+            rb'\[(?:DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\] ')
+        records = []
+        with self.buffer_lock:
+            for suffix in (".1", ""):
+                try:
+                    with open(self.persistent_log_fn + suffix, "rb") as log_file:
+                        raw = log_file.read()
+                except (IOError, OSError):
+                    continue
+                complete_end = raw.rfind(b"\n") + 1
+                raw = raw[:complete_end]
+                starts = list(record_start.finditer(raw))
+                for index, match in enumerate(starts):
+                    end = starts[index + 1].start() if index + 1 < len(starts) else len(raw)
+                    try:
+                        records.append(raw[match.start():end].decode("utf-8"))
+                    except UnicodeDecodeError:
+                        continue
+
+        grouped = []
+        index = 0
+        while index < len(records):
+            text = records[index]
+            if " - [ERROR] ERROR_CONTEXT_BEGIN\n" not in text:
+                grouped.append(text)
+                index += 1
+                continue
+            block = [text]
+            index += 1
+            while index < len(records):
+                block.append(records[index])
+                finished = " - [ERROR] ERROR_CONTEXT_END\n" in records[index]
+                index += 1
+                if finished:
+                    grouped.append("".join(block))
+                    break
+
+        selected = []
+        for text in grouped:
+            if view == "warning":
+                if not re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} - '
+                                r'\[(?:WARNING|WARN|ERROR|CRITICAL)\] ', text):
+                    continue
+            else:
+                try:
+                    timestamp = datetime.strptime(text[:23], "%Y-%m-%d %H:%M:%S.%f").timestamp()
+                except (ValueError, OSError):
+                    continue
+                end_time = self.startup_verbose_ended_at or time.time()
+                if not self.boot_started_at <= timestamp <= end_time:
+                    continue
+                if len(selected) >= self.save_start_log:
+                    break
+            selected.append(text)
+
+        result = []
+        result_size = 0
+        for text in reversed(selected):
+            size = len(text.encode("utf-8"))
+            if size > max_bytes:
+                continue
+            if result_size + size > max_bytes:
+                break
+            result.append(text)
+            result_size += size
+        result.reverse()
+        return "".join(result)
+
     def get_last_lines(self, max_lines):
         self.buffer_lock.acquire()
         buffer_len = len(self.buffer)

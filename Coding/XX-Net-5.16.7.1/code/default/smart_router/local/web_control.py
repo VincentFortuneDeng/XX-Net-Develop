@@ -68,6 +68,15 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         elif cmd == "get_new":
             last_no = int(reqs["last_no"])
             data = xlog.get_new_lines(last_no)
+        elif cmd == "export":
+            view = reqs.get("view", "")
+            max_bytes = 256 * 1024 if view == "startup" else 512 * 1024
+            if reqs.get("max_bytes"):
+                try:
+                    max_bytes = int(reqs["max_bytes"])
+                except (TypeError, ValueError):
+                    max_bytes = 0
+            data = xlog.export_view(view, max_bytes)
         else:
             xlog.error('xtunnel log cmd:%s', cmd)
 

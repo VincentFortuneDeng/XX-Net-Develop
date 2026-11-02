@@ -57,6 +57,15 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         elif cmd == "get_new":
             last_no = int(reqs["last_no"][0])
             data = front.logger.get_new_lines(last_no)
+        elif cmd == "export":
+            view = reqs.get("view", [""])[0]
+            max_bytes = 256 * 1024 if view == "startup" else 512 * 1024
+            if reqs.get("max_bytes"):
+                try:
+                    max_bytes = int(reqs["max_bytes"][0])
+                except (TypeError, ValueError):
+                    max_bytes = 0
+            data = front.logger.export_view(view, max_bytes)
         else:
             front.logger.error('PAC %s %s %s ', self.address_string(), self.command, self.path)
 
