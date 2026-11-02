@@ -42,7 +42,7 @@
     <span class="badge deployed">I/J 同 key 聚合已有生产实证</span>
     <span class="badge deployed">K/L/M 已部署并随新进程加载</span>
     <span class="badge deployed">N 已部署并随 PID 43995 加载</span>
-    <span class="badge pending">O 已部署待重启</span>
+    <span class="badge pending">O 已部署并重启</span>
     <span class="badge mechanism">独立 HTML · 无外部依赖</span>
   </div>
   <div class="summary-grid">
@@ -80,7 +80,7 @@
   <div class="timeline-item"><strong>10-31 · L：剩余推荐错误修复</strong><span class="small">host=None 诊断 URL 占位、xlog.warning 委托修正；R10/B9 RED→GREEN。req timeout 当前为 0，不新增节流。</span></div>
   <div class="timeline-item"><strong>10-31 · M：生命周期尾账结算</strong><span class="small">五个真实 stop/reset 终点各补一条聚合尾账并清账，不增加后台线程；已出现 16 条 transfer final 生产尾账。</span></div>
   <div class="timeline-item"><strong>11-01 · N：启动失败清理与测试隔离</strong><span class="small">代理启动失败按逆序清理既有资源并保留原异常；已随 PID 43995 加载。本次代理正常启动，清理路径未触发。</span></div>
-  <div class="timeline-item"><strong>11-02 · O：统一日志存储与有界错误上下文</strong><span class="small">每个持久 Logger 只写一份主正文；启动详细期后普通 DEBUG/INFO 仅内存，ERROR 附带近期上下文；视图按需导出，诊断包按优先级装包。已部署待重启。</span></div>
+  <div class="timeline-item"><strong>11-02 · O：统一日志存储与有界错误上下文</strong><span class="small">每个持久 Logger 只写一份主正文；启动详细期后普通 DEBUG/INFO 仅内存，ERROR 附带近期上下文；视图按需导出，诊断包按优先级装包。已部署并重启。</span></div>
 </div>
 </section>
 
@@ -351,7 +351,7 @@ reset()
 </div></article>
 
 <article class="change" data-kind="logonly pending">
-<div class="change-head"><h3>O：统一权威正文、错误上下文、按需视图与诊断包</h3><span class="tag pending">已部署待重启</span> <span class="tag logonly">仅日志 / 存储</span></div>
+<div class="change-head"><h3>O：统一权威正文、错误上下文、按需视图与诊断包</h3><span class="tag pending">已部署并重启</span> <span class="tag logonly">仅日志 / 存储</span></div>
 <div class="change-body"><div class="path">xlog.py · 七个 web_control.py · x_tunnel/local/upload_logs.py · 四个生命周期调用文件</div>
 <pre><code>启动详细期：所有级别写 &lt;name&gt;.log
 详细期后：普通 DEBUG/INFO 仅内存；persist=True 或 WARNING+ 持续落盘
@@ -362,7 +362,7 @@ startup/warning：按需读取 .1 + 主正文，保留完整记录和完整上�
 诊断包：状态/配置 → 内存快照 → 视图 → 主正文 → .1 → 显式 legacy</code></pre>
 <dl class="fields"><dt>权威正文</dt><dd>每个已有持久 Logger 只维护 <code>&lt;name&gt;.log</code> 和单代 <code>.1</code>，主文件默认 10MiB；reset 只重开，不删历史。旧 start/warning 文件只读保留，不自动删除。</dd><dt>记录边界</dt><dd>单条最长 64KiB 且不超过文件上限，超限中部省略并保持合法 UTF-8；滚动和视图预算均不输出半条记录。</dd><dt>兼容接口</dt><dd>原 Web 内存 JSON 的 get_last/get_new 保留；新增 <code>cmd=export&amp;view=startup|warning&amp;max_bytes=N</code>。startup 默认 256KiB，warning 默认 512KiB。</dd><dt>诊断预算</dt><dd>默认按未压缩内容 10MiB 计入，过大项跳过并继续较小候选；旧 start/warning 默认不入包，<code>client.json</code> 仍删除 login_password。</dd><dt>生命周期</dt><dd>只给既有八处启动、监听、停止 INFO 增加 <code>persist=True</code>，不新增日志语句，不批量标记 per-request INFO。</dd><dt>业务边界</dt><dd>不改网络重试、路由、Queue、传输、DNS 或业务生命周期；ERROR 上下文只读既有内存快照，不新增线程。</dd></dl>
 <div class="ok">独立全差异审查的一项 Critical（exception 小文件滚动淘汰 ERROR 本体）与两项 Important（启动计数、首次打开失败）均经新增测试 RED→GREEN 修复；完整回归通过。冷却表上限与极小测试上限两项 Minor 延后。</div>
-<div class="risk">O 已于 2026-11-03 部署 13 个生产文件并逐字节校验，备份位于 backups/pre-rsync-20261103-o/；当前待用户重启，尚无新进程加载或生产疗效证据。旧日志文件仍存在；统一正文并不自动清理历史数据。</div>
+<div class="risk">O 已随 PID 5445（00:31:23）加载，两次代理 204，六启用模块视图与原内存 JSON 正常，本次统一正文无 ERROR/CRITICAL/Traceback，旧 warning 未再写入。错误上下文、滚动、stop/reset 与诊断上传未触发，不扩大疗效结论。</div>
 </div></article>
 
 <article class="change" data-kind="logonly">
@@ -411,7 +411,7 @@ startup/warning：按需读取 .1 + 主正文，保留完整记录和完整上�
 <li>J：离线测试通过；生产已出现 mark_sn_timeout 首报，聚合路径已加载。</li>
 <li>M：生产已出现 16 条 transfer final 聚合尾账；其他终点未由该样例代为证明。</li>
 <li>10MB 滚动：生产未触达阈值，由滚动测试覆盖。</li>
-<li>O：统一正文/上下文 19 项、视图 10 项、诊断包 10 项、生命周期契约 1 项均离线通过；已部署待重启，尚无新进程加载证据，不能视为生产证据。</li>
+<li>O：统一正文/上下文 19 项、视图 10 项、诊断包 10 项、生命周期契约 1 项均离线通过；已部署并随 PID 5445 加载；启动、代理和日志接口已核验，未触发路径不视为已有生产疗效。</li>
 </ul>
 </div>
 </div>
@@ -419,7 +419,7 @@ startup/warning：按需读取 .1 + 主正文，保留完整记录和完整上�
 <ul class="checklist">
 <li><strong>K/L/M 已部署并随 PID 74385 加载：</strong>约 20 小时代理仍为 204，K 两类 NoneType 为 0，L host=None 为 0；M 已有 transfer final 实证。另发现一条既有 SocketWrap.close EBADF，留作独立候选。</li>
 <li><strong>N 已部署并随 PID 43995 加载：</strong>8086 正常监听，首次代理请求超时后两次复测均 204；本次代理正常启动，启动 ERROR/Traceback 为 0，N 清理路径未触发。</li>
-<li><strong>O 已部署待重启：</strong>统一正文、ERROR 上下文、按需视图和诊断包已完成离线验证及 13 文件部署；当前待重启，尚无生产疗效声明。</li>
+<li><strong>O 已部署并重启：</strong>统一正文、ERROR 上下文、按需视图和诊断包已完成离线验证及部署重启；启动、代理和导出接口有生产核验，错误上下文、滚动与诊断上传未触发。</li>
 <li><code>req get response timeout</code>：当前四份 x_tunnel warning 日志及 I/J 重启后均为 0，未达到高频条件，本轮不做新增节流。</li>
 <li>微旱态降级、LogThrottle 后台脉冲、完整 episode 框架、全局 ERROR 限流：均未实施；M 只接真实生命周期终点，不做全局定时结算。</li>
 <li>上游 front 池质量、远端 handshake/connect timeout、check_update 网络不可达：不是本地日志补丁能够根治的项目。</li>
@@ -440,13 +440,13 @@ startup/warning：按需读取 .1 + 主正文，保留完整记录和完整上�
 <tr><td class="path">launcher/mac_tray.py</td><td>macOS 托盘/helper</td><td>PyObjC、启动、持久 helper</td><td><span class="tag baseline">本地基线</span></td></tr>
 <tr><td class="path">launcher/web_control.py</td><td>Web 路由/debug</td><td>no-module WARN→DEBUG；线程帧快照</td><td><span class="tag deployed">已部署</span></td></tr>
 <tr><td class="path">launcher/web_ui/status.html</td><td>状态页</td><td>按启用状态停止无效轮询</td><td><span class="tag deployed">已部署</span></td></tr>
-<tr><td class="path">x_tunnel/local/upload_logs.py</td><td>诊断收集</td><td>按启用状态过滤 URL；O 按需视图与六级预算装包</td><td><span class="tag deployed">旧轮询已部署</span> <span class="tag pending">O 待重启</span></td></tr>
+<tr><td class="path">x_tunnel/local/upload_logs.py</td><td>诊断收集</td><td>按启用状态过滤 URL；O 按需视图与六级预算装包</td><td><span class="tag deployed">旧轮询已部署</span> <span class="tag pending">O 已加载</span></td></tr>
 <tr><td class="path">smart_router/local/__init__.py</td><td>Smart Router 启动</td><td>DNS 先于代理启动；N 代理启动失败逆序清理资源</td><td><span class="tag deployed">K/N 已加载</span> <span class="tag pending">N 清理未触发</span></td></tr>
 <tr><td class="path">smart_router/local/dns_query.py</td><td>DoT/TCP/Local DNS</td><td>fd 修复、WARN 参数、nameserver INFO、DNS WARN/DEBUG 与退避</td><td><span class="tag deployed">已部署至 H</span></td></tr>
 <tr><td class="path">smart_router/local/dns_server.py</td><td>DNS 包处理</td><td>reserved/frag WARN→DEBUG</td><td><span class="tag deployed">已部署</span></td></tr>
 <tr><td class="path">smart_router/local/pipe_socks.py</td><td>非阻塞转发</td><td>selector DEBUG；send-block WARN/suppressed/final</td><td><span class="tag deployed">已部署</span></td></tr>
 <tr><td class="path">x_tunnel/local/tls_relay_front/ip_manager.py</td><td>front 池</td><td>IPv6 过滤与 skipped INFO</td><td><span class="tag deployed">已部署</span></td></tr>
-<tr><td class="path">lib/noarch/xlog.py</td><td>公共日志设施</td><td>统一正文与单代滚动、有界 ERROR 上下文、按需视图、LogThrottle 与生命周期 flush</td><td><span class="tag deployed">L/M 已加载</span> <span class="tag pending">O 待重启</span></td></tr>
+<tr><td class="path">lib/noarch/xlog.py</td><td>公共日志设施</td><td>统一正文与单代滚动、有界 ERROR 上下文、按需视图、LogThrottle 与生命周期 flush</td><td><span class="tag deployed">L/M 已加载</span> <span class="tag pending">O 已加载</span></td></tr>
 <tr><td class="path">lib/noarch/front_base/connect_manager.py</td><td>建连与 front 资源</td><td>no-IP WARN/recovered；_connect_ssl WARN/suppressed；M stop 尾账</td><td><span class="tag pending">M final 未触发</span></td></tr>
 <tr><td class="path">lib/noarch/front_base/http1.py</td><td>HTTP/1 worker</td><td>HEAD 三出口 WARN+trace，按 front IP 聚合；无全局 flush</td><td><span class="tag deployed">已部署至 G</span></td></tr>
 <tr><td class="path">lib/noarch/front_base/http_dispatcher.py</td><td>任务调度</td><td>retry/timeout/status 聚合；L host=None 防御；M stop 尾账</td><td><span class="tag pending">I 待疗效 / L/M 已加载</span></td></tr>
