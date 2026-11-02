@@ -29,7 +29,8 @@ full_log = False
 
 class Logger():
     def __init__(self, name, buffer_size=0, file_name=None, roll_num=1,
-                 log_path=None, save_start_log=0, save_warning_log=False):
+                 log_path=None, save_start_log=0, save_warning_log=False,
+                 save_persistent_log=False):
         self.name = str(name)
         self.file_max_size = 1024 * 1024
         self.buffer_lock = threading.RLock()
@@ -46,14 +47,13 @@ class Logger():
         self.log_path = log_path
         self.save_start_log = save_start_log
         self.save_warning_log = save_warning_log
+        self.save_persistent_log = save_persistent_log
         self.start_log_num = 0
-        if log_path and save_start_log:
-            now = datetime.now()
-            time_str = now.strftime("%Y-%m-%d_%H-%M-%S")
-            self.log_fn = os.path.join(log_path, "start_log_%s_%s.log" % (name, time_str))
-            self.start_log = open(self.log_fn, "w")
-        else:
-            self.start_log = None
+        self.boot_started_at = time.time()
+        self.startup_verbose_ended_at = None if save_start_log else self.boot_started_at
+        self.persistent_log_fn = None
+        self.persistent_fd = None
+        self.persistent_file_max_size = 10 * 1024 * 1024
 
         if log_path and os.path.exists(join(log_path, "keep_log.txt")):
             self.info("keep log")
@@ -61,18 +61,10 @@ class Logger():
         else:
             self.keep_log = False
 
-        if log_path and save_warning_log:
-            self.warning_log_fn = os.path.join(log_path, "%s_warning.log" % (name))
-            # (F-phase 2026-10-27) warning log used to be unbounded (append);
-            # one module log reached 225MB. Bound it with a single rolling
-            # backup (.1) and a larger cap than the 1MB main log, see
-            # _roll_warning_log_if_needed().
-            self.warning_file_max_size = 10 * 1024 * 1024
-            self.warning_log = open(self.warning_log_fn, "a")
-            self._roll_warning_log_if_needed()
-        else:
-            self.warning_log_fn = None
-            self.warning_log = None
+        if log_path and (save_warning_log or save_persistent_log):
+            self.persistent_log_fn = os.path.join(log_path, "%s.log" % name)
+            self.persistent_fd = open(self.persistent_log_fn, "ab")
+            self._roll_persistent_log_if_needed()
 
     def set_buffer(self, buffer_size):
         with self.buffer_lock:
@@ -86,32 +78,21 @@ class Logger():
                         pass
 
     def reset_log_files(self):
-        if not (self.keep_log or full_log):
-            if self.start_log:
-                self.start_log.close()
-                self.start_log = None
-
-            if self.warning_log:
-                self.warning_log.close()
-                self.warning_log = None
-
-        if self.log_path and not self.keep_log:
-            for filename in os.listdir(self.log_path):
-                fp = os.path.join(self.log_path, filename)
-                if not filename.endswith(".log") or fp == self.log_fn or not filename.startswith("start_log_%s" % self.name):
-                    continue
-
-                try:
-                    os.remove(fp)
-                except:
-                    pass
-
-        if self.warning_log_fn and not self.keep_log:
-            self.warning_log = open(self.warning_log_fn, "a")
-            # (F-phase 2026-10-27) freshly reopened warning log can still be
-            # oversized on disk; enforce the cap here too. Single-threaded
-            # context: no concurrent log() writers exist for this logger yet.
-            self._roll_warning_log_if_needed()
+        with self.buffer_lock:
+            if not self.persistent_log_fn:
+                return
+            try:
+                if self.persistent_fd:
+                    self.persistent_fd.flush()
+                    self.persistent_fd.close()
+            except Exception:
+                pass
+            self.persistent_fd = None
+            try:
+                self.persistent_fd = open(self.persistent_log_fn, "ab")
+                self._roll_persistent_log_if_needed()
+            except Exception:
+                self.persistent_fd = None
 
     def keep_logs(self):
         self.keep_log = True
@@ -121,12 +102,6 @@ class Logger():
 
         with open(join(self.log_path, "keep_log.txt"), "w") as fd:
             fd.write(" ")
-
-        if not self.start_log:
-            now = datetime.now()
-            time_str = now.strftime("%Y-%m-%d_%H-%M-%S")
-            log_fn = os.path.join(self.log_path, "start_log_%s_%s.log" % (self.name, time_str))
-            self.start_log = open(log_fn, "w")
 
     def setLevel(self, level):
         if level == "DEBUG":
@@ -180,28 +155,52 @@ class Logger():
 
         self.log_fd = open(file_name, "a+")
 
-    def _roll_warning_log_if_needed(self):
-        # (F-phase 2026-10-27) Single-backup roll for the warning log.
-        # Mirrors roll_log()/set_file() but keeps only one generation
-        # (".1"): disk usage is bounded at ~2x warning_file_max_size.
-        # Must be called with buffer_lock held (log() write path) or before
-        # any concurrent writer exists (__init__ / reset_log_files).
+    def _roll_persistent_log_if_needed(self, incoming_size=0):
         try:
-            if os.path.isfile(self.warning_log_fn) and \
-                    os.path.getsize(self.warning_log_fn) > self.warning_file_max_size:
-                self.warning_log.close()
-                self.warning_log = None
-                shutil.move(self.warning_log_fn, self.warning_log_fn + ".1")
-                self.warning_log = open(self.warning_log_fn, "a")
+            file_size = os.path.getsize(self.persistent_log_fn) \
+                if os.path.isfile(self.persistent_log_fn) else 0
+            if file_size and file_size + incoming_size > self.persistent_file_max_size:
+                if self.persistent_fd:
+                    self.persistent_fd.close()
+                    self.persistent_fd = None
+                os.replace(self.persistent_log_fn, self.persistent_log_fn + ".1")
+                self.persistent_fd = open(self.persistent_log_fn, "ab")
         except Exception:
-            # Keep logging alive even if roll fails (disk full, permission...);
-            # on failure warning_log may be None and writes are skipped, same
-            # as the main-log failure path.
-            if self.warning_log is None:
+            if self.persistent_fd is None:
                 try:
-                    self.warning_log = open(self.warning_log_fn, "a")
+                    self.persistent_fd = open(self.persistent_log_fn, "ab")
                 except Exception:
                     pass
+
+    def _persistent_record_bytes(self, string):
+        raw = string.encode("utf-8")
+        limit = min(64 * 1024, self.persistent_file_max_size)
+        if len(raw) <= limit:
+            return raw
+        marker = ("\n... %d bytes omitted ...\n" % len(raw)).encode("ascii")
+        remaining = max(0, limit - len(marker))
+        head = raw[:remaining // 2]
+        tail = raw[len(raw) - (remaining - len(head)):]
+        while head:
+            try:
+                head.decode("utf-8")
+                break
+            except UnicodeDecodeError:
+                head = head[:-1]
+        while tail:
+            try:
+                tail.decode("utf-8")
+                break
+            except UnicodeDecodeError:
+                tail = tail[1:]
+        return head + marker + tail
+
+    def _write_persistent(self, string):
+        data = self._persistent_record_bytes(string)
+        self._roll_persistent_log_if_needed(len(data))
+        if self.persistent_fd:
+            self.persistent_fd.write(data)
+            self.persistent_fd.flush()
 
     def roll_log(self):
         for i in range(self.roll_num, 1, -1):
@@ -246,28 +245,17 @@ class Logger():
                     self.log_fd = open(self.log_filename, "w")
                     self.file_size = 0
 
-            if self.start_log:
-                self.start_log.write(string)
-                try:
-                    self.start_log.flush()
-                except:
-                    pass
+            persist = kwargs.get("persist", False)
+            in_startup = self.save_start_log and self.start_log_num < self.save_start_log
+            if self.persistent_log_fn and (
+                    in_startup or persist or self.keep_log or full_log or
+                    level in ["WARN", "WARNING", "ERROR", "CRITICAL"]):
+                self._write_persistent(string)
+
+            if in_startup:
                 self.start_log_num += 1
-
-                if self.start_log_num > self.save_start_log and not self.keep_log and not full_log:
-                    self.start_log.close()
-                    self.start_log = None
-
-            if self.warning_log and level in ["WARN", "WARNING", "ERROR", "CRITICAL"]:
-                # (F-phase 2026-10-27) bound warning log size before writing,
-                # inside buffer_lock like the main-log roll above.
-                self._roll_warning_log_if_needed()
-                if self.warning_log:
-                    self.warning_log.write(string)
-                    try:
-                        self.warning_log.flush()
-                    except:
-                        pass
+                if self.start_log_num >= self.save_start_log:
+                    self.startup_verbose_ended_at = time.time()
 
             if self.buffer_size:
                 self.last_no += 1
@@ -294,7 +282,7 @@ class Logger():
     def info(self, fmt, *args, **kwargs):
         if self.min_level > INFO:
             return
-        self.log('INFO', self.reset_color, '000000', fmt, *args)
+        self.log('INFO', self.reset_color, '000000', fmt, *args, **kwargs)
 
     def warning(self, fmt, *args, **kwargs):
         if self.min_level > WARN:
@@ -426,7 +414,8 @@ loggerDict = {}
 
 
 def getLogger(name=None, buffer_size=0, file_name=None, roll_num=1,
-              log_path=None, save_start_log=0, save_warning_log=False):
+              log_path=None, save_start_log=0, save_warning_log=False,
+              save_persistent_log=False):
     global loggerDict, default_log
     if name is None:
         for n in loggerDict:
@@ -443,7 +432,8 @@ def getLogger(name=None, buffer_size=0, file_name=None, roll_num=1,
     if name in loggerDict:
         return loggerDict[name]
     else:
-        logger_instance = Logger(name, buffer_size, file_name, roll_num, log_path, save_start_log, save_warning_log)
+        logger_instance = Logger(name, buffer_size, file_name, roll_num, log_path,
+                                 save_start_log, save_warning_log, save_persistent_log)
         loggerDict[name] = logger_instance
         default_log = logger_instance
         return logger_instance

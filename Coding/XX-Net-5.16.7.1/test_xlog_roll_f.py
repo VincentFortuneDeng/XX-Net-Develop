@@ -61,8 +61,8 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 # --- A1/A2/A3: roll during writes ---
 lg = Logger("mod", log_path=LOG_DIR, save_warning_log=True)
-wl = os.path.join(LOG_DIR, "mod_warning.log")
-b1 = os.path.join(LOG_DIR, "mod_warning.log.1")
+wl = os.path.join(LOG_DIR, "mod.log")
+b1 = os.path.join(LOG_DIR, "mod.log.1")
 
 lg.error("before cap")  # goes to warning log
 sz = os.path.getsize(wl)
@@ -70,7 +70,7 @@ check("A1 under-cap no roll", sz > 0 and not os.path.exists(b1),
       "size=%d" % sz)
 
 # force roll by shrinking the cap (same code path as real 10MB overflow)
-lg.warning_file_max_size = 100
+lg.persistent_file_max_size = 180
 big = "x" * 80
 for i in range(5):
     lg.error("overflow %d %s" % (i, big))
@@ -98,7 +98,7 @@ check("A3 single generation, .1 replaced",
 
 # --- A4: init/write-time roll when file already oversized ---
 lg2 = Logger("mod", log_path=LOG_DIR, save_warning_log=True)
-lg2.warning_file_max_size = 100
+lg2.persistent_file_max_size = 180
 lg2.error("trigger init roll")
 main_txt = open(wl).read()
 b1_txt = open(b1).read()
