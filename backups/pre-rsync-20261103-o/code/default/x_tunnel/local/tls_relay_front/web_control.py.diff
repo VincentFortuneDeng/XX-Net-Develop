@@ -1,0 +1,20 @@
+diff --git a/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/tls_relay_front/web_control.py b/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/tls_relay_front/web_control.py
+index 2ac455b..deebd1e 100644
+--- a/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/tls_relay_front/web_control.py
++++ b/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/tls_relay_front/web_control.py
+@@ -58,6 +58,15 @@ class ControlHandler(simple_http_server.HttpServerHandler):
+         elif cmd == "get_new":
+             last_no = int(reqs["last_no"])
+             data = front.logger.get_new_lines(last_no)
++        elif cmd == "export":
++            view = reqs.get("view", "")
++            max_bytes = 256 * 1024 if view == "startup" else 512 * 1024
++            if reqs.get("max_bytes"):
++                try:
++                    max_bytes = int(reqs["max_bytes"])
++                except (TypeError, ValueError):
++                    max_bytes = 0
++            data = front.logger.export_view(view, max_bytes)
+         else:
+             front.logger.error('PAC %s %s %s ', self.address_string(), self.command, self.path)
+ 

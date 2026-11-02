@@ -1,0 +1,28 @@
+diff --git a/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/client.py b/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/client.py
+index 4f20f0d..9838fda 100644
+--- a/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/client.py
++++ b/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/client.py
+@@ -118,7 +118,7 @@ def start(args):
+             g.bind_port = port
+         except:
+             continue
+-        xlog.info("Socks5 server listen:%s:%d.", g.config.socks_host, port)
++        xlog.info("Socks5 server listen:%s:%d.", g.config.socks_host, port, persist=True)
+         break
+ 
+     ready = True
+@@ -132,12 +132,12 @@ def stop():
+     front_dispatcher.stop()
+ 
+     if g.socks5_server:
+-        xlog.info("Close Socks5 server ")
++        xlog.info("Close Socks5 server ", persist=True)
+         g.socks5_server.shutdown()
+         g.socks5_server = None
+ 
+     if g.session:
+-        xlog.info("Stopping session")
++        xlog.info("Stopping session", persist=True)
+         g.session.stop()
+         g.session = None
+     ready = False

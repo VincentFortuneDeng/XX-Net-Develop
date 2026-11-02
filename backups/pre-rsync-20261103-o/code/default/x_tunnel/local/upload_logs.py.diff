@@ -1,0 +1,140 @@
+diff --git a/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/upload_logs.py b/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/upload_logs.py
+index c538875..41d17b1 100644
+--- a/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/upload_logs.py
++++ b/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/upload_logs.py
+@@ -140,54 +140,98 @@ def collect_debug_and_log():
+             xlog.warn("fetch info %s fail:%r", url, e)
+ 
+ 
+-def list_files():
+-    log_files = {}
+-    other_files = []
+-    for root, subdirs, files in os.walk(data_path):
+-        for filename in files:
+-            src_file = os.path.join(root, filename)
+-
+-            extension = filename.split(".")[-1]
+-            if extension in ["json", "txt"]:
+-                other_files.append(src_file)
+-
+-            if extension not in ["log",]:
+-                continue
++def collect_log_views():
++    port = get_launcher_port()
++    enable_flags = get_module_enable_flags(port)
++    controls = {
++        "launcher": f"http://127.0.0.1:{port}/log",
++        "smart_router": f"http://127.0.0.1:{port}/module/smart_router/control/log",
++        "gae_proxy": f"http://127.0.0.1:{port}/module/gae_proxy/control/log",
++        "x_tunnel": f"http://127.0.0.1:{port}/module/x_tunnel/control/log",
++        "cloudflare_front": f"http://127.0.0.1:{port}/module/x_tunnel/control/cloudflare_front/log",
++        "seley_front": f"http://127.0.0.1:{port}/module/x_tunnel/control/seley_front/log",
++        "tls_relay": f"http://127.0.0.1:{port}/module/x_tunnel/control/tls_relay_front/log",
++    }
++    if enable_flags:
++        for module in ("gae_proxy", "smart_router"):
++            if not enable_flags[module]:
++                del controls[module]
++        if not enable_flags["x_tunnel"]:
++            for module in ("x_tunnel", "cloudflare_front", "seley_front", "tls_relay"):
++                del controls[module]
+ 
+-            mtime = os.path.getmtime(src_file)
+-            log_files[src_file] = mtime
++    views = {}
++    for name, base_url in controls.items():
++        for view, max_bytes in (("startup", 256 * 1024), ("warning", 512 * 1024)):
++            url = "%s?cmd=export&view=%s&max_bytes=%d" % (base_url, view, max_bytes)
++            try:
++                res = simple_http_client.request("GET", url, timeout=1)
++                views["views/%s_%s.log" % (name, view)] = utils.to_bytes(res.text)
++            except Exception as e:
++                xlog.warn("fetch log view %s fail:%r", url, e)
++    return views
+ 
+-    # pack new log first, skip old log if size exceed.
+-    files = sorted(list(log_files.items()), key=operator.itemgetter(1), reverse=True)
+-    log_files_list = [src_file for src_file, mtime in files]
+ 
+-    # always pack other files(.json and .txt).
+-    return other_files + log_files_list
++UNIFIED_LOG_NAMES = {
++    "launcher.log", "smart_router.log", "gae_proxy.log", "x_tunnel.log",
++    "cloudflare_front.log", "seley_front.log", "tls_relay.log",
++}
+ 
+ 
+-def pack_logs(max_size=10 * 1024 * 1024):
++def diagnostic_file_groups(include_legacy=False):
++    groups = {"state": [], "memory": [], "main": [], "backup": [], "legacy": []}
++    for root, subdirs, files in os.walk(data_path):
++        for filename in files:
++            src_file = os.path.join(root, filename)
++            relate_path = os.path.relpath(src_file, data_path)
++            extension = filename.split(".")[-1]
++            if extension in ("json", "txt"):
++                if relate_path.startswith("downloads" + os.path.sep) and filename.endswith("_log.txt"):
++                    groups["memory"].append((relate_path, src_file))
++                else:
++                    groups["state"].append((relate_path, src_file))
++            elif filename in UNIFIED_LOG_NAMES:
++                groups["main"].append((relate_path, src_file))
++            elif filename.endswith(".log.1") and filename[:-6] + ".log" in UNIFIED_LOG_NAMES:
++                groups["backup"].append((relate_path, src_file))
++            elif include_legacy and (filename.endswith(".log") or filename.endswith(".log.1")):
++                groups["legacy"].append((relate_path, src_file))
++
++    for group in groups.values():
++        group.sort()
++    for group_name in ("main", "backup"):
++        groups[group_name].sort(key=lambda item: os.path.getmtime(item[1]), reverse=True)
++    return groups
++
++
++def pack_logs(max_size=10 * 1024 * 1024, include_legacy=False):
+     content_size = 0
+ 
+-    collect_debug_and_log()
+-
+     try:
+-        files = list_files()
++        collect_debug_and_log()
++        views = collect_log_views()
++        groups = diagnostic_file_groups(include_legacy)
++        candidates = groups["state"] + groups["memory"]
++        candidates += sorted((name, content) for name, content in views.items())
++        candidates += groups["main"] + groups["backup"] + groups["legacy"]
++
+         zip_buffer = io.BytesIO()
+         with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zfd:
+-            for src_file in files:
+-                file_size = os.path.getsize(src_file)
+-                if content_size + file_size > max_size:
+-                    break
+-
+-                relate_path = src_file[len(data_path) + 1:]
+-                # xlog.debug("Add file:%s size:%d", relate_path, file_size)
+-
+-                if relate_path.endswith("client.json"):
+-                    content = mask_x_tunnel_password(src_file)
+-                    zfd.writestr(relate_path, content)
++            for relate_path, source in candidates:
++                if isinstance(source, bytes):
++                    content = source
+                 else:
+-                    zfd.write(src_file, arcname=relate_path)
+-                content_size += file_size
++                    if os.path.getsize(source) > max_size - content_size:
++                        continue
++                    if relate_path.endswith("client.json"):
++                        content = utils.to_bytes(mask_x_tunnel_password(source))
++                    else:
++                        with open(source, "rb") as fd:
++                            content = fd.read()
++                if content_size + len(content) > max_size:
++                    continue
++                zfd.writestr(relate_path, content)
++                content_size += len(content)
+ 
+         compressed_data = zip_buffer.getvalue()
+         xlog.debug("compress log size:%d to %d", content_size, len(compressed_data))

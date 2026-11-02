@@ -1,0 +1,13 @@
+diff --git a/Coding/XX-Net-5.16.7.1/code/default/launcher/start.py b/Coding/XX-Net-5.16.7.1/code/default/launcher/start.py
+index 98db67f..e44e877 100644
+--- a/Coding/XX-Net-5.16.7.1/code/default/launcher/start.py
++++ b/Coding/XX-Net-5.16.7.1/code/default/launcher/start.py
+@@ -101,7 +101,7 @@ sys.excepthook = uncaught_exception_handler
+ 
+ 
+ def exit_handler():
+-    xlog.info('Stopping all modules before exit!')
++    xlog.info('Stopping all modules before exit!', persist=True)
+     global_var.running = False
+     module_init.stop_all()
+     web_control.stop()
