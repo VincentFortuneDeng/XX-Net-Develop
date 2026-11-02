@@ -163,6 +163,16 @@ class LogViewExportTests(unittest.TestCase):
                 self.assertIn('cmd == "get_new"', handler)
                 self.assertIn("get_last_lines(max_line", handler)
                 self.assertIn("get_new_lines(last_no", handler)
+    def test_v10_error_context_does_not_consume_startup_record_budget(self):
+        logger = self.make_logger(startup=3)
+        logger.info("startup before error")
+        logger.error("startup error")
+        logger.info("startup after error")
+        exported = logger.export_view("startup", 10000)
+        self.assertIn("startup before error", exported)
+        self.assertIn("startup error", exported)
+        self.assertIn("startup after error", exported)
+        self.assertIn("ERROR_CONTEXT_BEGIN", exported)
 
 
 if __name__ == "__main__":

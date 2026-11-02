@@ -65,8 +65,11 @@ class Logger():
 
         if log_path and (save_warning_log or save_persistent_log):
             self.persistent_log_fn = os.path.join(log_path, "%s.log" % name)
-            self.persistent_fd = open(self.persistent_log_fn, "ab")
-            self._roll_persistent_log_if_needed()
+            try:
+                self.persistent_fd = open(self.persistent_log_fn, "ab")
+                self._roll_persistent_log_if_needed()
+            except Exception:
+                self.persistent_fd = None
 
     def set_buffer(self, buffer_size):
         with self.buffer_lock:
@@ -284,9 +287,9 @@ class Logger():
             if self.persistent_log_fn and (
                     in_startup or persist or self.keep_log or full_log or
                     level in ["WARN", "WARNING", "ERROR", "CRITICAL"]):
-                self._write_persistent(string)
                 if level in ["ERROR", "CRITICAL"] and kwargs.get("include_context", True):
                     self._write_error_context(fmt)
+                self._write_persistent(string)
 
             if in_startup:
                 self.start_log_num += 1
@@ -391,6 +394,7 @@ class Logger():
                     break
 
         selected = []
+        startup_count = 0
         for text in grouped:
             if view == "warning":
                 if not re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} - '
@@ -404,8 +408,10 @@ class Logger():
                 end_time = self.startup_verbose_ended_at or time.time()
                 if not self.boot_started_at <= timestamp <= end_time:
                     continue
-                if len(selected) >= self.save_start_log:
-                    break
+                if " - [ERROR] ERROR_CONTEXT_BEGIN\n" not in text:
+                    if startup_count >= self.save_start_log:
+                        break
+                    startup_count += 1
             selected.append(text)
 
         result = []

@@ -281,6 +281,40 @@ class UnifiedLogStorageTests(unittest.TestCase):
             self.assertEqual(content.count("ERROR_CONTEXT_BEGIN"),
                              content.count("ERROR_CONTEXT_END"))
         self.assertLessEqual(max(map(len, [content.encode("utf-8") for content in contents])), 500)
+    def test_c10_exception_body_survives_context_and_stack_rolling(self):
+        logger = self.make_logger(startup=0, buffer_size=100)
+        logger.persistent_file_max_size = 500
+        for index in range(10):
+            logger.info("rolling clue %d %s", index, "x" * 50)
+        logger.info("persistent filler %s", "f" * 300, persist=True)
+        try:
+            raise ValueError("small file exception " + "x" * 600)
+        except ValueError:
+            logger.exception("exception body must survive")
+        contents = []
+        for suffix in (".1", ""):
+            path = os.path.join(self.temp_dir.name, "mod.log" + suffix)
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as log_file:
+                    contents.append(log_file.read())
+        combined = "".join(contents)
+        self.assertIn("exception body must survive", combined)
+        self.assertIn("Traceback (most recent call last)", combined)
+
+    def test_u9_initial_open_failure_degrades_to_memory_and_can_recover(self):
+        missing = os.path.join(self.temp_dir.name, "missing", "logs")
+        logger = xlog.Logger("recover", buffer_size=20, log_path=missing,
+                             save_start_log=0, save_persistent_log=True)
+        self.loggers.append(logger)
+        self.assertIsNone(logger.persistent_fd)
+        logger.info("memory survives open failure")
+        self.assertIn("memory survives open failure",
+                      "".join(json.loads(logger.get_last_lines(20)).values()))
+        os.makedirs(missing)
+        logger.reset_log_files()
+        logger.error("persistent write recovered")
+        with open(os.path.join(missing, "recover.log"), encoding="utf-8") as log_file:
+            self.assertIn("persistent write recovered", log_file.read())
 
 
 if __name__ == "__main__":
