@@ -101,7 +101,7 @@ sys.excepthook = uncaught_exception_handler
 
 
 def exit_handler():
-    xlog.info('Stopping all modules before exit!')
+    xlog.info('Stopping all modules before exit!', persist=True)
     global_var.running = False
     module_init.stop_all()
     web_control.stop()

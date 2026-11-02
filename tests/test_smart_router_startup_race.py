@@ -24,7 +24,7 @@ class Logger(object):
     def debug(self, *args):
         pass
 
-    def info(self, *args):
+    def info(self, *args, **kwargs):
         pass
 
     def warn(self, *args):

@@ -177,7 +177,7 @@ def start(args):
             except Exception:
                 xlog.exception("stop resource after proxy startup failure")
         raise
-    xlog.info("Proxy server listen:%s:%d.", proxy_listen_ips, g.config.proxy_port)
+    xlog.info("Proxy server listen:%s:%d.", proxy_listen_ips, g.config.proxy_port, persist=True)
     xlog.debug("DNS server port %d", g.dns_srv.listen_port)
 
     ready = True

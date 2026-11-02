@@ -68,7 +68,7 @@ def start(module):
 
             proc_handler[module]["proc"] = subprocess.Popen([sys.executable, script_path], shell=False)
 
-        xlog.info("module %s started", module)
+        xlog.info("module %s started", module, persist=True)
 
     except Exception as e:
         xlog.exception("start module %s fail:%s", module, e)
@@ -102,7 +102,7 @@ def stop(module):
 
         del proc_handler[module]
 
-        xlog.info("module %s stopped", module)
+        xlog.info("module %s stopped", module, persist=True)
     except Exception as e:
         xlog.exception("stop module %s fail:%s", module, e)
         return "Except:%s" % e
@@ -136,7 +136,7 @@ def start_all_auto():
             start(module)
             # web_control.confirm_module_ready(config.get(["modules", module, "control_port"], 0))
             finished_time = time.time()
-            xlog.info("start %s time cost:%d ms", module, (finished_time - start_time) * 1000)
+            xlog.info("start %s time cost:%d ms", module, (finished_time - start_time) * 1000, persist=True)
 
 
 def stop_all():
