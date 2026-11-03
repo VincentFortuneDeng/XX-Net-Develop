@@ -111,8 +111,8 @@ def notify_front_change():
 
 
 def get_front(host, timeout):
-    start_time = time.time()
-    while time.time() - start_time < timeout:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         with get_front_condition:
             if host in ["dns.xx-net.org", g.config.api_server]:
                 fronts = list(light_fronts)
@@ -148,7 +148,9 @@ def get_front(host, timeout):
             return best_front
 
         with get_front_condition:
-            get_front_condition.wait(0.005)
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                get_front_condition.wait(min(0.005, remaining))
 
     g.stat["timeout_roundtrip"] += 5
     return None
@@ -172,20 +174,27 @@ def count_connection(host):
 
 def request(method, host, path="/", headers={}, data="", timeout=100):
     # xlog.debug("front request %s timeout:%d", path, timeout)
-    start_time = time.time()
+    deadline = time.monotonic() + timeout
 
     content, status, response = "", 603, {}
-    while time.time() - start_time < timeout:
-        start_get_front = time.time()
-        front = get_front(host, timeout)
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+
+        start_get_front = time.monotonic()
+        front = get_front(host, remaining)
         if not front:
             xlog.warn("get_front fail")
             return "", 602, {}
 
-        finished_get_front = time.time()
-        get_front_time = finished_get_front - start_get_front
+        get_front_time = time.monotonic() - start_get_front
         if get_front_time > 0.1:
             xlog.warn("get_front_time: %f for %s %s %s", get_front_time, method, host, path)
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
 
         if host == "dns.xx-net.org" and front == cloudflare_front and g.server_host:
             # share the x-tunnel connection with dns.xx-net.org
@@ -199,7 +208,7 @@ def request(method, host, path="/", headers={}, data="", timeout=100):
             headers["Padding"] = padding
 
         content, status, response = front.request(
-            method, host=host, path=path, headers=dict(headers), data=data, timeout=timeout)
+            method, host=host, path=path, headers=dict(headers), data=data, timeout=remaining)
 
         if status not in [200, 521, 400, 404]:
             allowed, suppressed = front_retry_log_throttle.allow((host, path))
@@ -208,13 +217,19 @@ def request(method, host, path="/", headers={}, data="", timeout=100):
                     xlog.warn("front retry %s%s (suppressed %d)", host, path, suppressed)
                 else:
                     xlog.warn("front retry %s%s", host, path)
-            time.sleep(1)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(1, remaining))
             continue
 
         header_len = int(response.headers.get(b"Content-Length", 0))
         if header_len and len(content) != header_len:
             xlog.warn("response length incorrect, head len:%s, content len:%d retry it", header_len, len(content))
-            time.sleep(1)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(1, remaining))
             continue
 
         return content, status, response
