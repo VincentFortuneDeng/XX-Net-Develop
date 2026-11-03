@@ -12,7 +12,7 @@
 
 | 文件 | 补丁 |
 |---|---|
-| `start` | 启动期提示修正：先探测 `boringssl` (abi3) 实际可加载性再打印提示（原无条件打印误导性 system SSL 提示）；PyObjC/Pillow 缺失时先试用户级安装（`pip install --user --break-system-packages`，兼容 PEP 668），不再直接 `sudo pip3` |
+| `start` | 启动期提示修正：先探测 `boringssl` (abi3) 实际可加载性再打印提示（原无条件打印误导性 system SSL 提示）；PyObjC/Pillow 缺失时先试用户级安装（`pip install --user --break-system-packages`，兼容 PEP 668），不再直接 `sudo pip3`。P 阶段：迁移官方 054daa66，重复 set 防重、unset 循环清除历史重复 jump，多接口仍有引用时保留 REDSOCKS，成功退出码为 0 |
 | `code/default/launcher/web_control.py` | 噪音降级：两处 `no module in path` WARN → DEBUG（191-193、268-271 行附近）；竞态修复：`req_debug_handler` 先取 `sys._current_frames()` 快照再 `.get(thread.ident)`，消除线程退出竞态 KeyError |
 | `code/default/launcher/mac_tray.py` | PyObjC 11.x 兼容（`import objc` 独立导入 + 装饰器修复）、语言检测备选、setupHelper 守护线程、finishLaunching、helper 路径与权限检查修复（问题一/问题五） |
 | `code/default/launcher/lang/zh_CN/LC_MESSAGES/messages.po` | 补充 15+ 条缺失中文翻译（问题二） |
@@ -22,7 +22,9 @@
 | `code/default/smart_router/local/__init__.py` | K 阶段：将 `g.local_ips`、`g.dns_query` 与 `g.dns_srv` 初始化前移到 `proxy_server.start()` 之前，消除启动首请求访问 None DNS 查询对象或 UDP 中继的竞态；代理/DNS 地址分离，端口参数与业务逻辑不变。N 阶段：代理 Server 构造/启动失败时按逆序尝试清理 DNS、PipeSocks 与 ConnectManager，清理异常不遮蔽原启动异常，ready=False；正常启动与 stop 不变 |
 | `code/default/smart_router/local/dns_query.py` | 四项修复 1：DoT `connect` 判空（B1/B2：close 保留 + 注释实证、基类 direct_connect fd 泄漏与日志参数修复、代理路径 connect 失败 close）；E 阶段：`_is_usable_nameserver()` nameserver 过滤（拒 fe80::/10、fc00::/7、::1、ff00::/8，放行 IPv4 与全球单播 v6）+ get_local_dns_server 过滤前移与兔底；H 阶段：EHOSTUNREACH/ENETUNREACH per-nameserver 60s 退避，冷却跳过、全冷却最早到期单点 fail-open、重复失败不延长、成功清账 |
 | `code/default/smart_router/local/pipe_socks.py` | 四项修复 2+4：`try_add` fd 竞态（fileno 预检 + ValueError/KeyError DEBUG）；BlockingIOError 限流 `warn_send_block`（同 socket 每秒 1 条 + suppressed 聚合）；B3 try_remove 对称处理；B6 close 时补打 final 并清账 |
-| `code/default/x_tunnel/local/tls_relay_front/ip_manager.py` | 四项修复 3：`ipv6_available()` UDP 探测（全球单播判定，缓存 300s）+ get_ip_sni_host 过滤 IPv6 前端；B4 修正 `::` 误判；B5 过滤 INFO 可观测。`seley_front/ip_manager.py` 经相对导入继承 |
+| `code/default/x_tunnel/local/tls_relay_front/ip_manager.py` | 四项修复 3：`ipv6_available()` UDP 探测（全球单播判定，缓存 300s）+ get_ip_sni_host 过滤 IPv6 前端；B4 修正 `::` 误判；B5 过滤 INFO 可观测。`seley_front/ip_manager.py` 经相对导入继承。P 阶段：迁移官方 8613cd7b 综合评分，按 RTT + 预期包成本 + adjust 选线并返回 adjust；保留 IPv6 过滤与限流日志，非法输入跳过候选 |
+| `code/default/x_tunnel/local/tls_relay_front/front.py` | P 阶段：服务端每条线路的 `adjust` 同时传递到 IPv4/IPv6 host 信息，缺省为 0 |
+| `code/default/x_tunnel/local/tls_relay_front/config.py` | P 阶段：`dispather_work_max_score` 默认值由 1 调整为 2 |
 | `code/default/lib/darwin/boringssl.abi3.so` | ARM64 原生 BoringSSL（abi3），指纹与官方 x86_64 一致，见 `../../boringssl-arm64/BUILD-macOS-ARM64.md` |
 | `code/default/lib/noarch/xlog.py` | F 阶段：① warning_log 10MB 上限单份滚动 `_roll_warning_log_if_needed()`（仅一代 `.1`，磁盘上限约 2×10MB；挂点 4 处：`__init__` 开文件后、`reset_log_files()` 重开后、`log()` 写入路径 buffer_lock 内写前检查；roll 失败重开 fd，再失败跳过写入，与主日志既有失败路径一致）② 通用节流类 `LogThrottle`：`allow(key) -> (allowed, suppressed_count)`，首条立即放行、窗口内仅计数、下一条放行时附 `(suppressed N)` 结算；带锁、512 键过期剪枝；内存只持有 `[ts, count]` 整数对，从不暂存日志内容。L 阶段：顶层 `warning()` 修正为委托 `default_log.warn()`。M 阶段：`flush() -> (suppressed_total, pending_key_count)` 原子取出、清空并封住旧生命周期，`reset()` 显式开启新生命周期，供真实 stop/reset 终点汇总 |
 | `code/default/smart_router/local/dns_server.py` | F 阶段：`reserved/frag` 包字段检查 `xlog.warn` → `xlog.debug`（159-165 行，附依据注释；实测 14,897+ 条/天的解析包字段检查非运行故障，DEBUG 仍进 start_log 可查） |
@@ -43,6 +45,8 @@
 | `../../tests/test_log_view_export.py` | O 阶段 startup/warning 视图、损坏记录与七模块 Web 走线：V1–V10，共 10/10 PASS |
 | `../../tests/test_log_diagnostic_pack.py` | O 阶段视图收集、禁用模块零请求、预算、优先级、脱敏和 legacy 边界：P1–P10，共 10/10 PASS |
 | `../../tests/test_persistent_lifecycle_logs.py` | O 阶段 AST 契约：只允许八处指定生命周期 INFO 使用 `persist=True` |
+| `../../tests/test_iptables_idempotent.py` | P 阶段：临时有状态 fake iptables 验证首次/重复 set、历史重复 jump、多接口 chain 保留、无规则 unset 和退出码，共 5/5 PASS；不执行真实防火墙命令 |
+| `../../tests/test_tls_relay_adjust.py` | P 阶段：固定 RTT/speed/adjust 评分、缺省与负值、非法/非有限输入、IPv4/IPv6 传递和过滤、链接状态及 worker 阈值，共 8/8 PASS |
 
 ## 修复阶段索引（详见 docs/XX-Net-macOS-ARM64-修复记录.md）
 
@@ -61,6 +65,7 @@
 - **M 阶段（生命周期尾账结算，2026-10-31，已部署并重启）**：`LogThrottle.flush()` 原子结算、清账并封口，`reset()` 开启新生命周期；接入 dispatcher、ConnectManager、ProxySession、BlockReceivePool.reset 与 front_dispatcher.stop，每个对象最多一条汇总 WARN，不逐 key、不后台线程。独立审查三项 Important（stop 后迟到事件、外层锁内日志、清理异常跳过结算）均一轮 RED→GREEN 修复；xlog 38/38、dispatcher 12/12、x_tunnel 14/14、SN 9/9，完整回归通过；http1 类级 HEAD 账本没有安全全局终点，保持现状。已随 K/L 重启加载；约 20 小时生产观察已出现 16 条 transfer final 聚合尾账，证明真实 stop/reset 终点可落盘，其余终点按实际事件继续观察
 - **N 阶段（启动失败清理与测试隔离，2026-11-01，已部署并重启）**：代理 Server 构造/启动失败时按 `dns_srv → dns_query → pipe_socks → connect_manager` 各尝试 stop，清理异常写日志但不遮蔽原始异常，ready=False；正常 K 启动顺序与正常 stop 不变。S3/S4 与独立 sys.modules 隔离回归均 RED→GREEN，S1–S4、xlog 38/38、dispatcher 12/12、x_tunnel 14/14、SN 9/9、DNS 9/9、五套既有回归与 fd 探针通过。2026-11-01 19:28 仅部署 `smart_router/local/__init__.py`，备份于 `backups/pre-rsync-20261101-n/`；部署 cmp 一致，SHA-256 为 `335f2090b3b525a98c4e679c0db1ea79411ef026cfb1f39a71c1687846fd14a8`。用户重启后 PID 43995（19:33:14）加载，8086 LISTEN；首次代理请求 20 秒超时，随后两次 generate_204 均 204。启动日志 ERROR/Traceback 为 0，代理正常启动，N 清理路径未触发，未 push
 - **O 阶段（统一日志存储与有界错误上下文，2026-11-02，开发完成未部署）**：每个已有持久 Logger 统一写 `<name>.log`，仅保留单代 `.1`；启动详细期后普通 DEBUG/INFO 仅内存，重要项可 `persist=True`，WARNING+ 持续落盘。ERROR/CRITICAL 从同一内存 buffer 导出近期 DEBUG/INFO，最多 40 条、16KiB、同原始 fmt 冷却 60 秒，本体和 exception 堆栈不受冷却影响。新增 startup/warning 按需视图，诊断包按明确优先级与 10MiB 未压缩预算装包；仅八处生命周期 INFO 显式持久化。新测试 U/C 19、V 10、P 10、生命周期契约 1 项均通过，旧 xlog 38/38 与计划完整回归通过，fd 探针 A(detached)。独立审查一项 Critical、两项 Important 均一轮 RED→GREEN 修复。2026-11-03 已将 13 个生产文件部署至 `/Applications/XX-Net`，备份于 `backups/pre-rsync-20261103-o/`，逐文件字节校验一致；用户重启后 PID 5445（00:31:23）加载，1080/8085/8086 正常监听，两次代理 204，六启用模块视图与原内存 JSON 正常，本次统一正文无 ERROR/CRITICAL/Traceback，旧 warning 未再写入。错误上下文、滚动和诊断上传未触发，不扩大疗效结论；未 push。
+- **P 阶段（上游 iptables 与 TLS Relay 修复，2026-11-03，开发完成未部署）**：分别迁移官方 054daa66 与 8613cd7b，独立 RED→GREEN 和独立提交。iptables 5/5、TLS Relay 8/8、既有独立模型 30/30 PASS；`start` Shell 语法检查与提交差异检查通过。生产只读黑盒 9/10 PASS，唯一失败仍为历史 F04：默认 HTTP/1.1 的 24 路 `/debug` 中一路超时、一路连接重置；显式 close 组及代理 204 通过。本轮未部署、未重启、未 push，不将离线结果写成生产疗效。
 
 ## 已知评估后接受项
 
