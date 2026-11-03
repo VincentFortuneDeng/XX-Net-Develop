@@ -99,6 +99,7 @@ class XlogIndependent(unittest.TestCase):
                         text = ''.join(rng.choice('ab中文🙂é') for _ in range(rng.randint(1, 300)))
                         payloads.append(text)
                         logger.warn('%s', text)
+                logger.flush_persistent_writes()
                 if logger.persistent_fd:
                     logger.persistent_fd.close()
                 main = Path(tmp, 'model.log').read_bytes()
@@ -152,6 +153,7 @@ class XlogIndependent(unittest.TestCase):
             logger.reset_log_files()
             with mock.patch.object(xlog.sys, 'stderr', new=io.StringIO()):
                 logger.error('persisted-after-recovery')
+            logger.flush_persistent_writes()
             logger.persistent_fd.close()
             self.assertIn('persisted-after-recovery', (target / 'recover.log').read_text())
 
@@ -166,6 +168,7 @@ class XlogIndependent(unittest.TestCase):
                     raise RuntimeError('z' * 500)
                 except RuntimeError:
                     logger.exception('unique-error-body')
+            logger.flush_persistent_writes()
             logger.persistent_fd.close()
             content = (Path(tmp, 'small.log.1').read_text() + Path(tmp, 'small.log').read_text())
             self.assertIn('unique-error-body', content)

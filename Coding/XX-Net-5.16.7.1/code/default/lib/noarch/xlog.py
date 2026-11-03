@@ -7,6 +7,7 @@ import threading
 import json
 import re
 import shutil
+import queue
 from os.path import join
 
 from six import string_types
@@ -56,6 +57,14 @@ class Logger():
         self.persistent_fd = None
         self.persistent_file_max_size = 10 * 1024 * 1024
         self.error_context_last = {}
+        self.write_queue_maxsize = 1024
+        self.write_queue = queue.Queue(maxsize=self.write_queue_maxsize)
+        self.dropped_persistent_records = 0
+        self._dropped_pending = 0
+        self._writer_lock = threading.Lock()
+        self._writer_thread = None
+        self._writer_sealed = False
+        self._persistent_size = 0
 
         if log_path and os.path.exists(join(log_path, "keep_log.txt")):
             self.info("keep log")
@@ -67,6 +76,7 @@ class Logger():
             self.persistent_log_fn = os.path.join(log_path, "%s.log" % name)
             try:
                 self.persistent_fd = open(self.persistent_log_fn, "ab")
+                self._persistent_size = os.path.getsize(self.persistent_log_fn)
                 self._roll_persistent_log_if_needed()
             except Exception:
                 self.persistent_fd = None
@@ -83,6 +93,7 @@ class Logger():
                         pass
 
     def reset_log_files(self):
+        self.flush_persistent_writes()
         with self.buffer_lock:
             if not self.persistent_log_fn:
                 return
@@ -95,6 +106,7 @@ class Logger():
             self.persistent_fd = None
             try:
                 self.persistent_fd = open(self.persistent_log_fn, "ab")
+                self._persistent_size = os.path.getsize(self.persistent_log_fn)
                 self._roll_persistent_log_if_needed()
             except Exception:
                 self.persistent_fd = None
@@ -162,18 +174,19 @@ class Logger():
 
     def _roll_persistent_log_if_needed(self, incoming_size=0):
         try:
-            file_size = os.path.getsize(self.persistent_log_fn) \
-                if os.path.isfile(self.persistent_log_fn) else 0
+            file_size = self._persistent_size
             if file_size and file_size + incoming_size > self.persistent_file_max_size:
                 if self.persistent_fd:
                     self.persistent_fd.close()
                     self.persistent_fd = None
                 os.replace(self.persistent_log_fn, self.persistent_log_fn + ".1")
                 self.persistent_fd = open(self.persistent_log_fn, "ab")
+                self._persistent_size = 0
         except Exception:
             if self.persistent_fd is None:
                 try:
                     self.persistent_fd = open(self.persistent_log_fn, "ab")
+                    self._persistent_size = os.path.getsize(self.persistent_log_fn)
                 except Exception:
                     pass
 
@@ -200,12 +213,112 @@ class Logger():
                 tail = tail[1:]
         return head + marker + tail
 
-    def _write_persistent(self, string):
-        data = self._persistent_record_bytes(string)
+    def _write_persistent_sync(self, data, flush=True):
         self._roll_persistent_log_if_needed(len(data))
         if self.persistent_fd:
             self.persistent_fd.write(data)
-            self.persistent_fd.flush()
+            self._persistent_size += len(data)
+            if flush:
+                self.persistent_fd.flush()
+
+    def _write_persistent(self, string):
+        data = self._persistent_record_bytes(string)
+        with self._writer_lock:
+            if self._writer_sealed:
+                return
+            try:
+                self.write_queue.put_nowait(data)
+            except queue.Full:
+                self.dropped_persistent_records += 1
+                self._dropped_pending += 1
+                return
+            if self._writer_thread is None or not self._writer_thread.is_alive():
+                self._writer_thread = threading.Thread(target=self._persistent_writer,
+                                                       name="xlog_writer_%s" % self.name, daemon=True)
+                self._writer_thread.start()
+
+    def _take_dropped_records(self):
+        with self._writer_lock:
+            dropped = self._dropped_pending
+            self._dropped_pending = 0
+        return dropped
+
+    def _write_dropped_summary(self):
+        dropped = self._take_dropped_records()
+        if not dropped:
+            return
+        time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:23]
+        line = "%s - [WARNING] persistent writer dropped %d records because the queue was full\n" % (
+            time_str, dropped)
+        self._write_persistent_sync(line.encode("utf-8"), flush=False)
+
+    def _persistent_writer(self):
+        while True:
+            data = self.write_queue.get()
+            if data is None:
+                self.write_queue.task_done()
+                try:
+                    self._write_dropped_summary()
+                    if self.persistent_fd:
+                        self.persistent_fd.flush()
+                except Exception:
+                    pass
+                break
+
+            batch = [data]
+            stopped = False
+            while len(batch) < 64:
+                try:
+                    data = self.write_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if data is None:
+                    stopped = True
+                    break
+                batch.append(data)
+
+            try:
+                self._write_dropped_summary()
+                for item in batch:
+                    self._write_persistent_sync(item, flush=False)
+                if self.persistent_fd:
+                    self.persistent_fd.flush()
+            except Exception:
+                pass
+            for item in batch:
+                self.write_queue.task_done()
+            if stopped:
+                self.write_queue.task_done()
+                break
+
+    def flush_persistent_writes(self):
+        thread = self._writer_thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            self.write_queue.join()
+
+    def stop(self):
+        with self._writer_lock:
+            self._writer_sealed = True
+            thread = self._writer_thread
+
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            while True:
+                try:
+                    self.write_queue.put(None, timeout=0.1)
+                    break
+                except queue.Full:
+                    if not thread.is_alive():
+                        break
+            self.write_queue.join()
+            thread.join()
+
+        if self.persistent_fd:
+            try:
+                self.persistent_fd.flush()
+                self.persistent_fd.close()
+            except Exception:
+                pass
+            self.persistent_fd = None
 
     def _write_error_context(self, fmt):
         if not self.persistent_log_fn:
@@ -359,6 +472,7 @@ class Logger():
         if not self.persistent_log_fn:
             return ""
 
+        self.flush_persistent_writes()
         record_start = re.compile(
             rb'(?m)^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} - '
             rb'\[(?:DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\] ')
@@ -571,6 +685,11 @@ def getLogger(name=None, buffer_size=0, file_name=None, roll_num=1,
 def reset_log_files():
     for name, log in loggerDict.items():
         log.reset_log_files()
+
+
+def stop():
+    for name, log in loggerDict.items():
+        log.stop()
 
 
 def keep_log(temp=False):
