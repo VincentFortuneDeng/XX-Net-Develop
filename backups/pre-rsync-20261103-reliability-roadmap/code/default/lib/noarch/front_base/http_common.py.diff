@@ -1,0 +1,28 @@
+--- /Applications/XX-Net/code/default/lib/noarch/front_base/http_common.py
++++ Coding/XX-Net-5.16.7.1/code/default/lib/noarch/front_base/http_common.py
+@@ -20,6 +20,7 @@
+         self.queue = queue
+         self.url = url
+         self.timeout = timeout
++        self.deadline = time.monotonic() + timeout
+         self.start_time = time.time()
+         if path == b'/':
+             path = headers.get(b"X-Path", b"/")
+@@ -62,7 +63,7 @@
+         if size:
+             while self.read_buffer_len < size:
+                 try:
+-                    data = self.body_queue.get(timeout=self.timeout)
++                    data = self.body_queue.get(timeout=max(0, self.deadline - time.monotonic()))
+                 except:
+                     data = None
+ 
+@@ -104,7 +105,7 @@
+                 self.read_buffer_len -= len(data)
+             else:
+                 try:
+-                    data = self.body_queue.get(timeout=self.timeout)
++                    data = self.body_queue.get(timeout=max(0, self.deadline - time.monotonic()))
+                 except:
+                     data = None
+ 

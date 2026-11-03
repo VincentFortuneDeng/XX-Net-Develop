@@ -1,0 +1,11 @@
+--- /Applications/XX-Net/code/default/lib/noarch/front_base/http_dispatcher.py
++++ Coding/XX-Net-5.16.7.1/code/default/lib/noarch/front_base/http_dispatcher.py
+@@ -357,7 +357,7 @@
+ 
+         if self.task_count > self.config.max_task_num:
+             self.logger.warn("task num exceed")
+-            time.sleep(1)
++            time.sleep(min(1, max(0, timeout)))
+             return None
+ 
+         with self.task_count_lock:

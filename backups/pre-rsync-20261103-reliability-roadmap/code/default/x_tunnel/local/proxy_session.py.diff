@@ -1,0 +1,183 @@
+--- /Applications/XX-Net/code/default/x_tunnel/local/proxy_session.py
++++ Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/proxy_session.py
+@@ -62,7 +62,7 @@
+         self.send_buffer = base_container.SendBuffer(max_payload=g.config.max_payload)
+         self.receive_process = base_container.BlockReceivePool(self.download_data_processor, xlog)
+         self.connection_pipe = base_container.ConnectionPipe(self, xlog)
+-        self.lock = threading.Lock()  # lock for conn_id, sn generation, on_road_num change,
++        self.lock = threading.RLock()  # lock for conn_id, sn generation, on_road_num change,
+         self.get_data_lock = threading.Lock()
+ 
+         self.send_delay = g.config.send_delay / 1000.0
+@@ -70,6 +70,9 @@
+         self.resend_timeout = g.config.resend_timeout / 1000.0
+ 
+         self.running = False
++        self.read_paused = False
++        self.read_paused_since = None
++        self.buffered_bytes = 0
+         self.round_trip_thread = {}
+         self.session_id = utils.generate_random_lowercase(8)
+         self.last_conn_id = 0
+@@ -140,6 +143,8 @@
+             # sn => ack
+             self.wait_ack_send_list = dict()
+             self.ack_send_continue_sn = 0
++            self.read_paused = False
++            self.buffered_bytes = 0
+ 
+             self.received_sn = []
+             self.receive_next_sn = 1
+@@ -175,8 +180,17 @@
+             args += (suppressed,)
+         xlog.warn(fmt, *args)
+ 
++    def check_backpressure_timeout(self):
++        with self.lock:
++            expired = (self.read_paused and self.read_paused_since is not None and
++                       time.monotonic() - self.read_paused_since >= self.config.session_backpressure_timeout)
++        if expired:
++            xlog.warn("session backpressure exceeded ACK timeout, resetting")
++            self.reset()
++
+     def timeout_checker(self):
+         while self.running:
++            self.check_backpressure_timeout()
+             timeout_num = 0
+             with self.lock:
+                 time_now = time.time()
+@@ -225,6 +239,10 @@
+ 
+                 self.close_all_connection()
+                 self.send_buffer.reset()
++                if hasattr(self, "wait_ack_send_list"):
++                    self.wait_ack_send_list = {}
++                self.read_paused = False
++                self.buffered_bytes = 0
+                 receive_tail = self.receive_process.reset(defer_log=True)
+                 self.wait_queue.stop()
+                 self.connection_pipe.stop()
+@@ -497,20 +515,21 @@
+             return None
+ 
+         with self.lock:
++            if not self.running:
++                return None
+             self.last_conn_id += 2
+             conn_id = self.last_conn_id
+-
+-        if isinstance(host, str):
+-            host = host.encode("ascii")
++            if isinstance(host, str):
++                host = host.encode("ascii")
++            self.conn_list[conn_id] = base_container.Conn(
++                self, conn_id, sock, host, port, g.config.windows_size,
++                g.config.windows_ack, True, xlog)
+ 
+         seq = 0
+         cmd_type = 0  # create connection
+         sock_type = 0  # TCP
+         data = struct.pack("<IBBH", seq, cmd_type, sock_type, len(host)) + host + struct.pack("<H", port)
+         self.send_conn_data(conn_id, data)
+-
+-        self.conn_list[conn_id] = base_container.Conn(self, conn_id, sock, host, port, g.config.windows_size,
+-                                                      g.config.windows_ack, True, xlog)
+ 
+         self.target_on_roads = \
+             min(g.config.concurent_thread_num - g.config.min_on_road, self.target_on_roads + 2)
+@@ -535,16 +554,36 @@
+         xlog.debug("stop all connection finished")
+ 
+     def remove_conn(self, conn_id):
+-        try:
+-            if conn_id in self.conn_list:
+-                conn = self.conn_list[conn_id]
+-                # xlog.debug("remove conn:%d %s:%d", conn_id, conn.host, conn.port)
+-                del self.conn_list[conn_id]
+-        except Exception as e:
+-            xlog.warn("remove conn:%d except:%r", conn_id, e)
+-
+-        if len(self.conn_list) == 0:
+-            self.target_on_roads = 0
++        with self.lock:
++            try:
++                self.conn_list.pop(conn_id, None)
++            except Exception as e:
++                xlog.warn("remove conn:%d except:%r", conn_id, e)
++
++            if len(self.conn_list) == 0:
++                self.target_on_roads = 0
++
++    def _update_backpressure_locked(self):
++        if not self.read_paused and self.buffered_bytes >= self.config.session_buffer_high_water:
++            self.read_paused = True
++            self.read_paused_since = time.monotonic()
++        elif self.read_paused and self.buffered_bytes <= self.config.session_buffer_low_water:
++            self.read_paused = False
++            self.read_paused_since = None
++
++        for conn in list(self.conn_list.values()):
++            if not conn.sock or not conn.running:
++                continue
++
++            conn_unacked = conn.received_position - conn.remote_acked_position
++            if self.read_paused or conn_unacked > conn.windows_size:
++                conn.connection_pipe.remove_sock_event(conn.sock, base_container.selectors.EVENT_READ)
++            else:
++                conn.connection_pipe.add_sock_event(conn.sock, conn, base_container.selectors.EVENT_READ)
++
++    def update_backpressure(self):
++        with self.lock:
++            self._update_backpressure_locked()
+ 
+     def send_conn_data(self, conn_id, data):
+         if not self.running:
+@@ -555,13 +594,17 @@
+         buf = base_container.WriteBuffer()
+         buf.append(struct.pack("<II", conn_id, len(data)))
+         buf.append(data)
+-        self.send_buffer.put(buf)
++        with self.lock:
++            self.send_buffer.put(buf)
++            self.buffered_bytes += len(buf)
+ 
+         if self.oldest_received_time == 0:
+             self.oldest_received_time = time.time()
+         elif self.send_buffer.pool_size > g.config.max_payload:
+             # xlog.debug("notify on send conn data")
+             self.wait_queue.notify()
++
++        self.update_backpressure()
+ 
+     @staticmethod
+     def sn_payload_head(sn, payload):
+@@ -668,7 +711,10 @@
+                 sn = struct.unpack("<I", ack.get(4))[0]
+                 # xlog.debug("ack: %d", sn)
+                 if sn in self.wait_ack_send_list:
+-                    self.wait_ack_send_list[sn] = "acked"
++                    pending = self.wait_ack_send_list[sn]
++                    if not isinstance(pending, str):
++                        self.buffered_bytes -= len(pending[0])
++                        self.wait_ack_send_list[sn] = "acked"
+ 
+             for sn in self.wait_ack_send_list:
+                 if sn > last_ack:
+@@ -677,12 +723,17 @@
+                     continue
+ 
+                 # xlog.debug("last_ack:%d sn:%d", last_ack, sn)
++                pending = self.wait_ack_send_list[sn]
++                if not isinstance(pending, str):
++                    self.buffered_bytes -= len(pending[0])
+                 self.wait_ack_send_list[sn] = "acked"
+ 
+             while (self.ack_send_continue_sn + 1) in self.wait_ack_send_list and \
+                     self.wait_ack_send_list[self.ack_send_continue_sn + 1] == "acked":
+                 self.ack_send_continue_sn += 1
+                 del self.wait_ack_send_list[self.ack_send_continue_sn]
++
++            self._update_backpressure_locked()
+ 
+         except Exception as e:
+             xlog.exception("ack_process:%r", e)

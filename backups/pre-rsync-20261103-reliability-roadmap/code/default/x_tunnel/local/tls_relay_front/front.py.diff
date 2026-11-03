@@ -1,0 +1,24 @@
+--- /Applications/XX-Net/code/default/x_tunnel/local/tls_relay_front/front.py
++++ Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/tls_relay_front/front.py
+@@ -72,11 +72,13 @@
+             sni = dat["sni"]
+             url_path = dat["url_path"]
+             port = dat.get("port", 443)
++            adjust = dat.get("adjust", 0)
+ 
+             host_info[ip_str] = {
+                 "sni":sni,
+                 "url_path": url_path,
+                 "port": port,
++                "adjust": adjust,
+             }
+ 
+             ipv6 = dat["ipv6"]
+@@ -85,6 +87,7 @@
+                     "sni": sni,
+                     "url_path": url_path,
+                     "port": port,
++                    "adjust": adjust,
+                 }
+ 
+         self.host_manager.set_host(host_info)

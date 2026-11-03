@@ -1,0 +1,58 @@
+--- /Applications/XX-Net/code/default/lib/noarch/simple_http_server.py
++++ Coding/XX-Net-5.16.7.1/code/default/lib/noarch/simple_http_server.py
+@@ -194,8 +194,6 @@
+         try:
+             self.parse_request()
+ 
+-            self.close_connection = 0
+-
+             if self.upgrade == b"websocket":
+                 self.do_WebSocket()
+             elif self.command == b"GET":
+@@ -378,22 +376,43 @@
+             data.append(b'Content-Type: %s\r\n' % utils.to_bytes(mimetype))
+ 
+         content = utils.to_bytes(content)
++        if isinstance(headers, dict):
++            headers = utils.to_bytes(headers)
++            if b'Content-Length' in headers:
++                del headers[b'Content-Length']
++
++        for source in (self.res_headers, headers):
++            if not isinstance(source, dict):
++                continue
++            for key in source:
++                if utils.to_bytes(key).lower() != b"connection":
++                    continue
++                value = utils.to_bytes(source[key]).lower()
++                if value == b"close":
++                    self.close_connection = 1
++                elif value == b"keep-alive":
++                    self.close_connection = 0
+ 
+         for key in self.res_headers:
++            if utils.to_bytes(key).lower() == b"connection":
++                continue
+             data.append(b"%s: %s\r\n" % (utils.to_bytes(key), utils.to_bytes(self.res_headers[key])))
+         data.append(b'Content-Length: %d\r\n' % len(content))
+ 
+         if len(headers):
+             if isinstance(headers, dict):
+-                headers = utils.to_bytes(headers)
+-                if b'Content-Length' in headers:
+-                    del headers[b'Content-Length']
+                 for key in headers:
++                    if utils.to_bytes(key).lower() == b"connection":
++                        continue
+                     data.append(b"%s: %s\r\n" % (utils.to_bytes(key), utils.to_bytes(headers[key])))
+             elif isinstance(headers, str):
+                 data.append(headers.encode("utf-8"))
+             elif isinstance(headers, bytes):
+                 data.append(headers)
++        if self.close_connection:
++            data.append(b"Connection: close\r\n")
++        elif self.request_version == b"HTTP/1.0":
++            data.append(b"Connection: keep-alive\r\n")
+         data.append(b"\r\n")
+ 
+         if len(content) < 1024:

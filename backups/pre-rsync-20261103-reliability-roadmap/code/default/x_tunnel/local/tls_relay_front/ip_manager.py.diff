@@ -1,0 +1,58 @@
+--- /Applications/XX-Net/code/default/x_tunnel/local/tls_relay_front/ip_manager.py
++++ Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/tls_relay_front/ip_manager.py
+@@ -1,6 +1,7 @@
+ import socket
+ import time
+ import json
++import math
+ 
+ import utils
+ from front_base.ip_manager import IpManagerBase
+@@ -80,7 +81,8 @@
+         now = time.time()
+ 
+         best_info = None
+-        best_speed = 0
++        best_adjust = 0
++        best_score = float("inf")
+         ipv6_enabled = self._ipv6_enabled()
+         skipped_ipv6 = 0
+ 
+@@ -109,9 +111,27 @@
+                 continue
+ 
+             speed, rtt = self.get_speed(ip_str)
+-            if speed > best_speed:
+-                best_speed = speed
++            try:
++                speed = float(speed)
++                rtt = float(rtt)
++                adjust = float(ip_info.get("adjust", 0))
++            except (TypeError, ValueError, OverflowError):
++                self.logger.debug(
++                    "get_ip_sni_host skip %s: invalid speed %r rtt %r adjust %r",
++                    ip_str, speed, rtt, ip_info.get("adjust"),
++                )
++                continue
++            if speed <= 0 or not all(math.isfinite(value) for value in (speed, rtt, adjust)):
++                self.logger.debug(
++                    "get_ip_sni_host skip %s: non-finite or non-positive metric speed %r rtt %r adjust %r",
++                    ip_str, speed, rtt, adjust,
++                )
++                continue
++            score = rtt + self.config.ip_cal_expect_time_package_size / speed + adjust
++            if score < best_score:
++                best_score = score
+                 best_info = info
++                best_adjust = ip_info.get("adjust", 0)
+ 
+         if not best_info:
+             return None
+@@ -135,6 +155,7 @@
+             "ip_str": ip_str,
+             "sni": None,
+             "host": None,
++            "adjust": best_adjust,
+         }
+ 
+     def update_ip(self, ip_str, sni, handshake_time):

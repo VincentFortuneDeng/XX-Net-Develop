@@ -1,0 +1,14 @@
+--- /Applications/XX-Net/code/default/x_tunnel/local/config.py
++++ Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/config.py
+@@ -80,6 +80,11 @@
+ 
+     config.set_var("windows_size", 10 * 1024 * 1024)  # will recalulate based on: max_payload * concurent_thread_num *2
+ 
++    # 会话上传缓冲高/低水位，达到高水位暂停本地读取，降至低水位恢复。
++    config.set_var("session_buffer_high_water", 64 * 1024 * 1024)
++    config.set_var("session_buffer_low_water", 32 * 1024 * 1024)
++    config.set_var("session_backpressure_timeout", 60)
++
+     # reporter
+     config.set_var("timeout_threshold", 2)
+     config.set_var("report_interval", 5 * 60)
