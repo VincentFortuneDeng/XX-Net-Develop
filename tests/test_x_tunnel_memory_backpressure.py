@@ -4,6 +4,7 @@ import sys
 import threading
 import types
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,6 +84,7 @@ class MemoryBackpressureTest(unittest.TestCase):
         session.send_delay = 0
         session.resend_timeout = 60
         session.read_paused = False
+        session.read_paused_since = None
         session.buffered_bytes = 0
         session.conn_list = {1: Conn()}
         return session
@@ -96,6 +98,7 @@ class MemoryBackpressureTest(unittest.TestCase):
             resend_timeout=60000,
             session_buffer_high_water=100,
             session_buffer_low_water=40,
+            session_backpressure_timeout=60,
         )
 
     def test_unacked_bytes_pause_and_resume_read_with_hysteresis(self):
@@ -151,6 +154,56 @@ class MemoryBackpressureTest(unittest.TestCase):
 
         self.assertTrue(session.read_paused)
         self.assertNotIn(("add", base.selectors.EVENT_READ), conn.connection_pipe.events)
+
+    def test_conn_removal_cannot_invalidate_backpressure_snapshot(self):
+        session = self.make_session()
+        session.conn_list[2] = Conn()
+        registry = session.conn_list
+
+        class RacingRegistry(dict):
+            def values(self):
+                iterator = iter(super().values())
+
+                class Iterator:
+                    def __init__(self):
+                        self.started = False
+
+                    def __iter__(self):
+                        return self
+
+                    def __next__(self):
+                        if not self.started:
+                            self.started = True
+                            value = next(iterator)
+                            worker = threading.Thread(target=session.remove_conn, args=(2,))
+                            worker.start()
+                            worker.join(0.05)
+                            return value
+                        return next(iterator)
+
+                return Iterator()
+
+        session.conn_list = RacingRegistry(registry)
+        session.update_backpressure()
+        for _ in range(20):
+            if 2 not in session.conn_list:
+                break
+            threading.Event().wait(0.005)
+
+        self.assertNotIn(2, session.conn_list)
+
+    def test_permanent_ack_stall_eventually_resets_session(self):
+        session = self.make_session()
+        session.read_paused = True
+        session.read_paused_since = 10.0
+        session.reset = mock.Mock()
+        global_var.config.session_backpressure_timeout = 60
+
+        with mock.patch.object(proxy.time, "monotonic", return_value=71.0):
+            check = getattr(session, "check_backpressure_timeout", lambda: None)
+            check()
+
+        session.reset.assert_called_once_with()
 
     def test_stop_clears_retained_bytes_and_pause_state(self):
         session = self.make_session()

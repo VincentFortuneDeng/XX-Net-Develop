@@ -62,7 +62,7 @@ class ProxySession(object):
         self.send_buffer = base_container.SendBuffer(max_payload=g.config.max_payload)
         self.receive_process = base_container.BlockReceivePool(self.download_data_processor, xlog)
         self.connection_pipe = base_container.ConnectionPipe(self, xlog)
-        self.lock = threading.Lock()  # lock for conn_id, sn generation, on_road_num change,
+        self.lock = threading.RLock()  # lock for conn_id, sn generation, on_road_num change,
         self.get_data_lock = threading.Lock()
 
         self.send_delay = g.config.send_delay / 1000.0
@@ -71,6 +71,7 @@ class ProxySession(object):
 
         self.running = False
         self.read_paused = False
+        self.read_paused_since = None
         self.buffered_bytes = 0
         self.round_trip_thread = {}
         self.session_id = utils.generate_random_lowercase(8)
@@ -179,8 +180,17 @@ class ProxySession(object):
             args += (suppressed,)
         xlog.warn(fmt, *args)
 
+    def check_backpressure_timeout(self):
+        with self.lock:
+            expired = (self.read_paused and self.read_paused_since is not None and
+                       time.monotonic() - self.read_paused_since >= self.config.session_backpressure_timeout)
+        if expired:
+            xlog.warn("session backpressure exceeded ACK timeout, resetting")
+            self.reset()
+
     def timeout_checker(self):
         while self.running:
+            self.check_backpressure_timeout()
             timeout_num = 0
             with self.lock:
                 time_now = time.time()
@@ -505,20 +515,21 @@ class ProxySession(object):
             return None
 
         with self.lock:
+            if not self.running:
+                return None
             self.last_conn_id += 2
             conn_id = self.last_conn_id
-
-        if isinstance(host, str):
-            host = host.encode("ascii")
+            if isinstance(host, str):
+                host = host.encode("ascii")
+            self.conn_list[conn_id] = base_container.Conn(
+                self, conn_id, sock, host, port, g.config.windows_size,
+                g.config.windows_ack, True, xlog)
 
         seq = 0
         cmd_type = 0  # create connection
         sock_type = 0  # TCP
         data = struct.pack("<IBBH", seq, cmd_type, sock_type, len(host)) + host + struct.pack("<H", port)
         self.send_conn_data(conn_id, data)
-
-        self.conn_list[conn_id] = base_container.Conn(self, conn_id, sock, host, port, g.config.windows_size,
-                                                      g.config.windows_ack, True, xlog)
 
         self.target_on_roads = \
             min(g.config.concurent_thread_num - g.config.min_on_road, self.target_on_roads + 2)
@@ -543,22 +554,22 @@ class ProxySession(object):
         xlog.debug("stop all connection finished")
 
     def remove_conn(self, conn_id):
-        try:
-            if conn_id in self.conn_list:
-                conn = self.conn_list[conn_id]
-                # xlog.debug("remove conn:%d %s:%d", conn_id, conn.host, conn.port)
-                del self.conn_list[conn_id]
-        except Exception as e:
-            xlog.warn("remove conn:%d except:%r", conn_id, e)
+        with self.lock:
+            try:
+                self.conn_list.pop(conn_id, None)
+            except Exception as e:
+                xlog.warn("remove conn:%d except:%r", conn_id, e)
 
-        if len(self.conn_list) == 0:
-            self.target_on_roads = 0
+            if len(self.conn_list) == 0:
+                self.target_on_roads = 0
 
     def _update_backpressure_locked(self):
         if not self.read_paused and self.buffered_bytes >= self.config.session_buffer_high_water:
             self.read_paused = True
+            self.read_paused_since = time.monotonic()
         elif self.read_paused and self.buffered_bytes <= self.config.session_buffer_low_water:
             self.read_paused = False
+            self.read_paused_since = None
 
         for conn in list(self.conn_list.values()):
             if not conn.sock or not conn.running:

@@ -61,6 +61,10 @@ class Logger():
         self.write_queue = queue.Queue(maxsize=self.write_queue_maxsize)
         self.dropped_persistent_records = 0
         self._dropped_pending = 0
+        self.persistent_write_errors = 0
+        self.last_persistent_write_error = None
+        self._counter_lock = threading.Lock()
+        self._lifecycle_lock = threading.RLock()
         self._writer_lock = threading.Lock()
         self._writer_thread = None
         self._writer_sealed = False
@@ -93,23 +97,24 @@ class Logger():
                         pass
 
     def reset_log_files(self):
-        self.flush_persistent_writes()
-        with self.buffer_lock:
-            if not self.persistent_log_fn:
-                return
-            try:
-                if self.persistent_fd:
-                    self.persistent_fd.flush()
-                    self.persistent_fd.close()
-            except Exception:
-                pass
-            self.persistent_fd = None
-            try:
-                self.persistent_fd = open(self.persistent_log_fn, "ab")
-                self._persistent_size = os.path.getsize(self.persistent_log_fn)
-                self._roll_persistent_log_if_needed()
-            except Exception:
+        with self._lifecycle_lock:
+            with self.buffer_lock:
+                self.flush_persistent_writes()
+                if not self.persistent_log_fn:
+                    return
+                try:
+                    if self.persistent_fd:
+                        self.persistent_fd.flush()
+                        self.persistent_fd.close()
+                except Exception:
+                    pass
                 self.persistent_fd = None
+                try:
+                    self.persistent_fd = open(self.persistent_log_fn, "ab")
+                    self._persistent_size = os.path.getsize(self.persistent_log_fn)
+                    self._roll_persistent_log_if_needed()
+                except Exception:
+                    self.persistent_fd = None
 
     def keep_logs(self):
         self.keep_log = True
@@ -229,8 +234,9 @@ class Logger():
             try:
                 self.write_queue.put_nowait(data)
             except queue.Full:
-                self.dropped_persistent_records += 1
-                self._dropped_pending += 1
+                with self._counter_lock:
+                    self.dropped_persistent_records += 1
+                    self._dropped_pending += 1
                 return
             if self._writer_thread is None or not self._writer_thread.is_alive():
                 self._writer_thread = threading.Thread(target=self._persistent_writer,
@@ -238,7 +244,7 @@ class Logger():
                 self._writer_thread.start()
 
     def _take_dropped_records(self):
-        with self._writer_lock:
+        with self._counter_lock:
             dropped = self._dropped_pending
             self._dropped_pending = 0
         return dropped
@@ -252,6 +258,17 @@ class Logger():
             time_str, dropped)
         self._write_persistent_sync(line.encode("utf-8"), flush=False)
 
+    def _record_persistent_write_failure(self, error, count):
+        with self._counter_lock:
+            self.dropped_persistent_records += count
+            self.persistent_write_errors += 1
+            self.last_persistent_write_error = repr(error)
+        try:
+            sys.stderr.write("%s persistent writer discarded %d records after %r\n" % (
+                self.name, count, error))
+        except Exception:
+            pass
+
     def _persistent_writer(self):
         while True:
             data = self.write_queue.get()
@@ -261,8 +278,8 @@ class Logger():
                     self._write_dropped_summary()
                     if self.persistent_fd:
                         self.persistent_fd.flush()
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._record_persistent_write_failure(e, 0)
                 break
 
             batch = [data]
@@ -283,8 +300,8 @@ class Logger():
                     self._write_persistent_sync(item, flush=False)
                 if self.persistent_fd:
                     self.persistent_fd.flush()
-            except Exception:
-                pass
+            except Exception as e:
+                self._record_persistent_write_failure(e, len(batch))
             for item in batch:
                 self.write_queue.task_done()
             if stopped:
@@ -297,28 +314,31 @@ class Logger():
             self.write_queue.join()
 
     def stop(self):
-        with self._writer_lock:
-            self._writer_sealed = True
-            thread = self._writer_thread
+        with self._lifecycle_lock:
+            with self._writer_lock:
+                if self._writer_sealed:
+                    return
+                self._writer_sealed = True
+                thread = self._writer_thread
 
-        if thread and thread.is_alive() and thread is not threading.current_thread():
-            while True:
-                try:
-                    self.write_queue.put(None, timeout=0.1)
-                    break
-                except queue.Full:
-                    if not thread.is_alive():
+            if thread and thread.is_alive() and thread is not threading.current_thread():
+                while True:
+                    try:
+                        self.write_queue.put(None, timeout=0.1)
                         break
-            self.write_queue.join()
-            thread.join()
+                    except queue.Full:
+                        if not thread.is_alive():
+                            break
+                self.write_queue.join()
+                thread.join()
 
-        if self.persistent_fd:
-            try:
-                self.persistent_fd.flush()
-                self.persistent_fd.close()
-            except Exception:
-                pass
-            self.persistent_fd = None
+            if self.persistent_fd:
+                try:
+                    self.persistent_fd.flush()
+                    self.persistent_fd.close()
+                except Exception as e:
+                    self._record_persistent_write_failure(e, 0)
+                self.persistent_fd = None
 
     def _write_error_context(self, fmt):
         if not self.persistent_log_fn:
@@ -688,8 +708,14 @@ def reset_log_files():
 
 
 def stop():
-    for name, log in loggerDict.items():
-        log.stop()
+    for name, log in list(loggerDict.items()):
+        try:
+            log.stop()
+        except Exception as e:
+            try:
+                sys.stderr.write("%s persistent writer stop failed: %r\n" % (name, e))
+            except Exception:
+                pass
 
 
 def keep_log(temp=False):

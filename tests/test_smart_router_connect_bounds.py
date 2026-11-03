@@ -96,6 +96,8 @@ class ConnectBoundsTest(unittest.TestCase):
         manager.connection_timeout = 15
         manager.connect_timeout = 5
         manager.connect_threads = connect_threads
+        manager.connect_slots = threading.BoundedSemaphore(connect_threads)
+        manager.inflight = set()
         manager.max_cache_per_host = connect_threads
         manager.max_cache_total = 4
         manager.running = True
@@ -131,6 +133,39 @@ class ConnectBoundsTest(unittest.TestCase):
         self.assertLessEqual(maximum, 2)
         self.assertEqual(len(sockets), 6)
         self.assertTrue(all(raw.closed for raw in sockets))
+
+    def test_concurrent_calls_share_manager_wide_connect_limit(self):
+        manager = self.make_manager(connect_threads=2)
+        active = 0
+        maximum = 0
+        counter_lock = threading.Lock()
+
+        def make_socket(*args):
+            def behavior(address):
+                nonlocal active, maximum
+                with counter_lock:
+                    active += 1
+                    maximum = max(maximum, active)
+                started = threading.Event()
+                started.wait(0.03)
+                with counter_lock:
+                    active -= 1
+                raise OSError("injected connect failure")
+
+            return RawSocket(behavior)
+
+        ips = [("198.51.100.%d" % index).encode() for index in range(1, 5)]
+        with mock.patch.object(connect_module.socket, "socket", side_effect=make_socket):
+            workers = [threading.Thread(target=manager.get_conn, args=("slow.example", ips, 443, 0.5))
+                       for _ in range(2)]
+            for worker in workers:
+                worker.start()
+            time.sleep(0.01)
+            for worker in workers:
+                worker.join(1)
+
+        self.assertFalse(any(worker.is_alive() for worker in workers))
+        self.assertLessEqual(maximum, 2)
 
     def test_cache_enforces_per_host_and_global_limits(self):
         manager = self.make_manager(connect_threads=2)

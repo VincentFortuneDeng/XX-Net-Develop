@@ -71,7 +71,7 @@ def get_dispatcher(host=None):
 def request(method, host, schema="http", path="/", headers={}, data="", timeout=60):
     global last_success_time, last_fail_time, continue_fail_num, success_num, fail_num
 
-    timeout = 30
+    deadline = time.monotonic() + timeout
     # use http to avoid cert fail
     url = "http://" + host + path
     if data:
@@ -86,7 +86,7 @@ def request(method, host, schema="http", path="/", headers={}, data="", timeout=
         fail_num += 1
         continue_fail_num += 1
         last_fail_time = time.time()
-        time.sleep(1)
+        time.sleep(min(1, max(0, deadline - time.monotonic())))
         return "", 602, {}
 
     last_success_time = time.time()

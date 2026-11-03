@@ -51,6 +51,7 @@ def create_data_path():
 
 create_data_path()
 
+import xlog as xlog_module
 from xlog import getLogger
 log_file = os.path.join(data_launcher_path, "launcher.log")
 xlog = getLogger("launcher", log_path=data_launcher_path, save_start_log=500, save_warning_log=True)
@@ -89,6 +90,7 @@ def uncaught_exception_handler(etype, value, tb):
         xlog.warn("KeyboardInterrupt, exiting...")
         global_var.running = False
         module_init.stop_all()
+        xlog_module.stop()
         os._exit(0)
 
     exc_info = ''.join(traceback.format_exception(etype, value, tb))
@@ -105,6 +107,7 @@ def exit_handler():
     global_var.running = False
     module_init.stop_all()
     web_control.stop()
+    xlog_module.stop()
 
 
 atexit.register(exit_handler)

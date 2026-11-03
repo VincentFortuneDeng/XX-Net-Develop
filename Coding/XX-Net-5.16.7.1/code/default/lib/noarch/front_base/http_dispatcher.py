@@ -357,7 +357,7 @@ class HttpsDispatcher(object):
 
         if self.task_count > self.config.max_task_num:
             self.logger.warn("task num exceed")
-            time.sleep(1)
+            time.sleep(min(1, max(0, timeout)))
             return None
 
         with self.task_count_lock:

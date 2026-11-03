@@ -83,6 +83,7 @@ def load_config():
     # 会话上传缓冲高/低水位，达到高水位暂停本地读取，降至低水位恢复。
     config.set_var("session_buffer_high_water", 64 * 1024 * 1024)
     config.set_var("session_buffer_low_water", 32 * 1024 * 1024)
+    config.set_var("session_backpressure_timeout", 60)
 
     # reporter
     config.set_var("timeout_threshold", 2)

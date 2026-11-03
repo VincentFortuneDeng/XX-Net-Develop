@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import re
 import sys
+import threading
 import types
 import unittest
 
@@ -63,6 +64,38 @@ class LocalResolver:
     def query(self, domain, dns_type=1, timeout=3):
         self.calls.append((domain, dns_type))
         return list(self.answers.get((domain, dns_type), []))
+
+
+class LateParallelResultTest(unittest.TestCase):
+    def test_timed_out_generation_cannot_overwrite_newer_query_cache(self):
+        class RecordingCache:
+            def __init__(self):
+                self.writes = []
+
+            def set_ips(self, domain, ips, dns_type):
+                self.writes.append((domain, list(ips), dns_type))
+
+        cache = RecordingCache()
+        global_var.domain_cache = cache
+        parallel = dns_module.ParallelQuery()
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow(domain, dns_type):
+            started.set()
+            release.wait(1)
+            return [b"192.0.2.1"]
+
+        first = threading.Thread(target=parallel.query, args=(b"late.example", 1, [slow]))
+        first.start()
+        self.assertTrue(started.wait(1))
+        second = parallel.query(b"late.example", 1, [lambda domain, dns_type: [b"192.0.2.2"]])
+        release.set()
+        first.join(1)
+
+        self.assertEqual(second, [b"192.0.2.2"])
+        self.assertEqual(cache.writes, [(b"late.example", [b"192.0.2.2"], 1)])
+        self.assertEqual(parallel.generations, {})
 
 
 class DnsQueryHistoryIsolationTest(unittest.TestCase):

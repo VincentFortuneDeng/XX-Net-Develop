@@ -697,16 +697,33 @@ class DnsOverHttpsQuery(object):
 
 
 class ParallelQuery():
+    def __init__(self):
+        self.generation_lock = threading.Lock()
+        self.generations = {}
+
     def query_worker(self, task, function):
-        ips = function(task.domain, task.dns_type)
-        if len(ips):
-            g.domain_cache.set_ips(task.domain, ips, task.dns_type)
-            task.put(ips)
+        try:
+            ips = function(task.domain, task.dns_type)
+            with self.generation_lock:
+                if self.generations.get((task.domain, task.dns_type)) == task.generation and len(ips):
+                    g.domain_cache.set_ips(task.domain, ips, task.dns_type)
+                    task.put(ips)
+        finally:
+            with self.generation_lock:
+                task.pending -= 1
+                key = (task.domain, task.dns_type)
+                if task.pending == 0 and self.generations.get(key) == task.generation:
+                    self.generations.pop(key, None)
 
     def query(self, domain, dns_type, funcs):
         task = Queue()
         task.domain = domain
         task.dns_type = dns_type
+        task.pending = len(funcs)
+        key = (domain, dns_type)
+        with self.generation_lock:
+            task.generation = self.generations.get(key, 0) + 1
+            self.generations[key] = task.generation
 
         for func in funcs:
             threading.Thread(target=self.query_worker, args=(task, func), name="ParalleQuery_%s" % domain).start()

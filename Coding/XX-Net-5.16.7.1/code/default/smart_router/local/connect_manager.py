@@ -51,6 +51,8 @@ class ConnectManager(object):
         self.connection_timeout = connection_timeout
         self.connect_timeout = connect_timeout
         self.connect_threads = connect_threads
+        self.connect_slots = threading.BoundedSemaphore(connect_threads)
+        self.inflight = set()
         self.max_cache_per_host = max(1, connect_threads)
         self.max_cache_total = max(16, connect_threads * 4)
 
@@ -61,6 +63,8 @@ class ConnectManager(object):
         with self.lock:
             self.running = False
             connections = [cc["conn"] for cache in self.cache.values() for cc in cache]
+            connections.extend(self.inflight)
+            self.inflight = set()
             self.cache = {}
 
         for conn in connections:
@@ -140,6 +144,11 @@ class ConnectManager(object):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 512 * 1024)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 512 * 1024)
 
+            with self.lock:
+                if not self.running:
+                    raise OSError("connect manager stopped")
+                self.inflight.add(sock)
+
             sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, True)
             sock.settimeout(timeout)
 
@@ -161,6 +170,15 @@ class ConnectManager(object):
                     pass
             g.ip_cache.report_connect_fail(ip, port)
             queue.put(False)
+        finally:
+            with self.lock:
+                self.inflight.discard(sock)
+
+    def _create_connect_worker(self, queue, host, ip, port):
+        try:
+            self.create_connect(queue, host, ip, port)
+        finally:
+            self.connect_slots.release()
 
     def get_conn(self, host, ips, port, timeout=5):
         # xlog.debug("connect to %s:%d %r", host, port, ips)
@@ -189,11 +207,19 @@ class ConnectManager(object):
         active = 0
         while next_ip < len(ordered_ips) or active:
             while next_ip < len(ordered_ips) and active < self.connect_threads and time.time() < end_time:
+                time_left = end_time - time.time()
+                if time_left <= 0 or not self.connect_slots.acquire(timeout=time_left):
+                    break
                 ip = ordered_ips[next_ip]
                 next_ip += 1
                 active += 1
-                threading.Thread(target=self.create_connect, args=(wait_queue, host, ip, port),
-                                 name="smart_router_create_conn_%s" % ip).start()
+                try:
+                    threading.Thread(target=self._create_connect_worker, args=(wait_queue, host, ip, port),
+                                     name="smart_router_create_conn_%s" % ip).start()
+                except Exception:
+                    active -= 1
+                    self.connect_slots.release()
+                    break
 
             time_left = end_time - time.time()
             if time_left <= 0:

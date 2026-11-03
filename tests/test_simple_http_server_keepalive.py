@@ -30,6 +30,14 @@ class RecordingHandler(server_module.HttpServerHandler):
         self.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
 
 
+class ResponseHandler(server_module.HttpServerHandler):
+    def setup(self):
+        self.res_headers = {}
+
+    def do_GET(self):
+        self.send_response(content=b"ok")
+
+
 class KeepAliveStateTest(unittest.TestCase):
     def make_handler(self, request):
         handler = RecordingHandler.__new__(RecordingHandler)
@@ -39,6 +47,38 @@ class KeepAliveStateTest(unittest.TestCase):
         handler.close_connection = 1
         handler.setup()
         return handler
+
+    def make_response_handler(self, request):
+        handler = ResponseHandler.__new__(ResponseHandler)
+        handler.rfile = io.BytesIO(request)
+        handler.wfile = io.BytesIO()
+        handler.logger = Collector()
+        handler.close_connection = 1
+        handler.setup()
+        return handler
+
+    def test_response_advertises_http11_close(self):
+        handler = self.make_response_handler(b"GET / HTTP/1.1\r\nConnection: close\r\n\r\n")
+
+        handler.handle_one_request()
+
+        self.assertIn(b"Connection: close\r\n", handler.wfile.getvalue())
+
+    def test_response_advertises_http10_keep_alive(self):
+        handler = self.make_response_handler(b"GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n")
+
+        handler.handle_one_request()
+
+        self.assertIn(b"Connection: keep-alive\r\n", handler.wfile.getvalue())
+
+    def test_custom_close_header_updates_connection_state_once(self):
+        handler = self.make_response_handler(b"GET / HTTP/1.1\r\n\r\n")
+        handler.res_headers["Connection"] = "close"
+
+        handler.handle_one_request()
+
+        self.assertEqual(handler.close_connection, 1)
+        self.assertEqual(handler.wfile.getvalue().lower().count(b"connection:"), 1)
 
     def test_http10_defaults_to_close(self):
         handler = self.make_handler(b"GET /first HTTP/1.0\r\n\r\n")

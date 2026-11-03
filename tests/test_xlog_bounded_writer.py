@@ -39,11 +39,83 @@ class SlowFile:
         pass
 
 
+class FailingFile:
+    def write(self, data):
+        raise OSError("injected disk full")
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
+
 class BoundedWriterTest(unittest.TestCase):
     def setUp(self):
         self.stderr_patch = mock.patch.object(xlog.sys, "stderr", new=io.StringIO())
         self.stderr_patch.start()
         self.addCleanup(self.stderr_patch.stop)
+
+    def test_disk_failure_is_counted_and_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            logger = xlog.Logger("disk-error", buffer_size=10, log_path=tmp, save_warning_log=True)
+            logger.persistent_fd.close()
+            logger.persistent_fd = FailingFile()
+
+            logger.warn("accepted-before-disk-failure")
+            logger.stop()
+
+            self.assertGreaterEqual(logger.dropped_persistent_records, 1)
+            self.assertIsNotNone(getattr(logger, "last_persistent_write_error", None))
+            self.assertIn("persistent writer", xlog.sys.stderr.getvalue())
+
+    def test_concurrent_stop_has_single_sentinel_and_always_finishes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            logger = xlog.Logger("double-stop", buffer_size=10, log_path=tmp, save_warning_log=True)
+            started = threading.Event()
+            release = threading.Event()
+            logger.persistent_fd.close()
+            logger.persistent_fd = SlowFile(started, release)
+            first = threading.Thread(target=logger.warn, args=("pending",))
+            first.start()
+            self.assertTrue(started.wait(1))
+            workers = [threading.Thread(target=logger.stop, daemon=True) for _ in range(2)]
+
+            for worker in workers:
+                worker.start()
+            threading.Event().wait(0.05)
+            release.set()
+            first.join(1)
+            for worker in workers:
+                worker.join(1)
+
+            self.assertFalse(any(worker.is_alive() for worker in workers))
+            self.assertEqual(logger.write_queue.unfinished_tasks, 0)
+
+    def test_reset_blocks_new_writes_until_pending_batch_is_reopened(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            logger = xlog.Logger("reset-race", buffer_size=10, log_path=tmp, save_warning_log=True)
+            started = threading.Event()
+            release = threading.Event()
+            logger.persistent_fd.close()
+            logger.persistent_fd = SlowFile(started, release)
+            first = threading.Thread(target=logger.warn, args=("first",))
+            first.start()
+            self.assertTrue(started.wait(1))
+            reset = threading.Thread(target=logger.reset_log_files)
+            reset.start()
+            second = threading.Thread(target=logger.warn, args=("second",))
+            second.start()
+            second.join(0.05)
+            blocked_during_reset = second.is_alive()
+            release.set()
+            first.join(1)
+            reset.join(1)
+            second.join(1)
+            logger.stop()
+
+            self.assertTrue(blocked_during_reset)
+            self.assertIn("second", Path(tmp, "reset-race.log").read_text())
 
     def test_slow_disk_does_not_block_business_calls(self):
         with tempfile.TemporaryDirectory() as tmp:
