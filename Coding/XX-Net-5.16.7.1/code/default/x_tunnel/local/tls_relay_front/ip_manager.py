@@ -1,6 +1,7 @@
 import socket
 import time
 import json
+import math
 
 import utils
 from front_base.ip_manager import IpManagerBase
@@ -80,7 +81,8 @@ class IpManager(IpManagerBase):
         now = time.time()
 
         best_info = None
-        best_speed = 0
+        best_adjust = 0
+        best_score = float("inf")
         ipv6_enabled = self._ipv6_enabled()
         skipped_ipv6 = 0
 
@@ -109,9 +111,22 @@ class IpManager(IpManagerBase):
                 continue
 
             speed, rtt = self.get_speed(ip_str)
-            if speed > best_speed:
-                best_speed = speed
+            if speed <= 0 or not math.isfinite(speed):
+                self.logger.debug("get_ip_sni_host skip %s: invalid speed %r", ip_str, speed)
+                continue
+            try:
+                adjust = float(ip_info.get("adjust", 0))
+            except (TypeError, ValueError):
+                self.logger.debug("get_ip_sni_host skip %s: invalid adjust %r", ip_str, ip_info.get("adjust"))
+                continue
+            if not math.isfinite(adjust):
+                self.logger.debug("get_ip_sni_host skip %s: non-finite adjust %r", ip_str, ip_info.get("adjust"))
+                continue
+            score = rtt + self.config.ip_cal_expect_time_package_size / speed + adjust
+            if score < best_score:
+                best_score = score
                 best_info = info
+                best_adjust = ip_info.get("adjust", 0)
 
         if not best_info:
             return None
@@ -135,6 +150,7 @@ class IpManager(IpManagerBase):
             "ip_str": ip_str,
             "sni": None,
             "host": None,
+            "adjust": best_adjust,
         }
 
     def update_ip(self, ip_str, sni, handshake_time):

@@ -405,7 +405,8 @@ class NetworkEdgeIndependent(unittest.TestCase):
                 self.assertEqual(expected, module.ipv6_available())
             sock.close.assert_called_once_with()
         manager = module.IpManager.__new__(module.IpManager)
-        manager.config = types.SimpleNamespace(use_ipv6='auto', max_links_per_ip=10)
+        manager.config = types.SimpleNamespace(use_ipv6='auto', max_links_per_ip=10,
+                                               ip_cal_expect_time_package_size=40000)
         manager.host_manager = types.SimpleNamespace(info={
             '2001:db8::1': {'sni': None}, '1.1.1.1': {'sni': None}})
         manager.ip_dict = {}
