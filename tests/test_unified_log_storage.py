@@ -40,6 +40,7 @@ class UnifiedLogStorageTests(unittest.TestCase):
     def tearDown(self):
         sys.stderr = self.original_stderr
         for logger in self.loggers:
+            logger.stop()
             for fd_name in ("persistent_fd", "log_fd"):
                 fd = getattr(logger, fd_name, None)
                 if fd:
@@ -57,6 +58,8 @@ class UnifiedLogStorageTests(unittest.TestCase):
         return logger
 
     def read_log(self, name="mod"):
+        for logger in self.loggers:
+            logger.flush_persistent_writes()
         path = os.path.join(self.temp_dir.name, name + ".log")
         if not os.path.exists(path):
             return ""
@@ -64,6 +67,8 @@ class UnifiedLogStorageTests(unittest.TestCase):
             return log_file.read()
 
     def read_bytes(self, name):
+        for logger in self.loggers:
+            logger.flush_persistent_writes()
         with open(os.path.join(self.temp_dir.name, name + ".log"), "rb") as log_file:
             return log_file.read()
 
@@ -130,6 +135,7 @@ class UnifiedLogStorageTests(unittest.TestCase):
         xlog.full_log = True
         for index in range(12):
             logger.info("detailed %d %s", index, "x" * 60)
+        logger.flush_persistent_writes()
         self.assertTrue(os.path.exists(os.path.join(self.temp_dir.name, "mod.log.1")))
         self.assertFalse(os.path.exists(os.path.join(self.temp_dir.name, "mod.log.1.2")))
         self.assertLessEqual(os.path.getsize(os.path.join(self.temp_dir.name, "mod.log")), 220)
@@ -139,6 +145,7 @@ class UnifiedLogStorageTests(unittest.TestCase):
         logger.persistent_file_max_size = 180
         for index in range(8):
             logger.error("错误 %d %s", index, "界" * 20)
+        logger.flush_persistent_writes()
         main_path = os.path.join(self.temp_dir.name, "mod.log")
         self.assertTrue(os.path.exists(main_path + ".1"))
         self.assertFalse(os.path.exists(main_path + ".1.2"))
@@ -266,6 +273,7 @@ class UnifiedLogStorageTests(unittest.TestCase):
         for index in range(10):
             logger.info("rolling clue %d %s", index, "x" * 50)
         logger.error("rolling error")
+        logger.flush_persistent_writes()
         paths = [os.path.join(self.temp_dir.name, "mod.log"),
                  os.path.join(self.temp_dir.name, "mod.log.1")]
         contents = []
@@ -291,6 +299,7 @@ class UnifiedLogStorageTests(unittest.TestCase):
             raise ValueError("small file exception " + "x" * 600)
         except ValueError:
             logger.exception("exception body must survive")
+        logger.flush_persistent_writes()
         contents = []
         for suffix in (".1", ""):
             path = os.path.join(self.temp_dir.name, "mod.log" + suffix)
@@ -313,6 +322,7 @@ class UnifiedLogStorageTests(unittest.TestCase):
         os.makedirs(missing)
         logger.reset_log_files()
         logger.error("persistent write recovered")
+        logger.flush_persistent_writes()
         with open(os.path.join(missing, "recover.log"), encoding="utf-8") as log_file:
             self.assertIn("persistent write recovered", log_file.read())
 
