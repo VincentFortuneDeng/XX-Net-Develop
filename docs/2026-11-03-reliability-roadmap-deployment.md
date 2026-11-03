@@ -45,7 +45,7 @@
 
 - 旧 PID 33775 已退出；检测到新 PID 67758 于 **2026-11-03 11:03:15** 从 `/Applications/XX-Net` 启动，监听 1080、8085、8086。该进程变化不是本会话命令触发，启动来源未确认，因此没有再次重启。
 - 15 个本批部署文件再次与开发快照及 `DEPLOYED-SHA256SUMS` 逐一核对，全部一致。新 PID 的启动时间晚于部署，且以下行为检查均针对该进程。
-- 正式 `tests/acceptance_production_blackbox.py` 连续运行三轮，均在 48 个并发 `/debug` 请求之后的首个 `/log?cmd=get_last&max_line=4` 抛出 `RemoteDisconnected`，脚本中途退出，**没有取得 10/10 PASS**。仅增加一秒请求间隔的诊断运行仍在响应读取阶段失败；未修改正式脚本或生产代码。
+- 正式 `tests/acceptance_production_blackbox.py` 连续运行三轮，均在 48 个并发 `/debug` 请求之后进入模块日志视图检查，并在 Smart Router 的 `/module/smart_router/control/log?cmd=get_last&max_line=4` 抛出 `RemoteDisconnected`，脚本中途退出，**没有取得 10/10 PASS**。仅增加一秒请求间隔的诊断运行仍在响应读取阶段失败；未修改正式脚本或生产代码。
 - 拆分专项序列另跑五轮：每轮默认 HTTP/1.1 `/debug` 24/24、显式 `Connection: close` 24/24，随后 `get_last` 与 `startup` 日志导出均返回 200。即两种 `/debug` 各累计 120 次成功，但这不能抵消完整黑盒失败，也不能宣称间歇长连接问题已治愈。
 - 独立经 127.0.0.1:8086 请求 `http://www.gstatic.com/generate_204`，25 秒后超时，重启后的代理连通项失败。
 - 重启后的 `launcher.log` 未扫描到 ERROR/CRITICAL；存在验收脚本故意传入非法 `max_bytes` 的预期 WARNING，以及一次 SwitchyOmega 下载失败 WARNING。
@@ -53,6 +53,25 @@
 - 最终新 PID 仍存在且三个端口仍监听，说明不是 Launcher 整体退出。现有证据尚不足以把 Web API 断开或代理超时归因于某一个本轮改动。
 
 本轮只进行正常请求和只读诊断，未注入生产故障、未删除日志、未修改配置。完整失败输出、五轮专项结果、告警筛选和进程采样保存在本路线图 SDD 工作区。
+
+## 失败根因诊断（2026-11-03 22:26–22:41）
+
+### 模块 Web API：已确认回归根因
+
+- 逐模块标记证明：完整黑盒已完成 Launcher 的全部日志视图请求，实际失败点是 **Smart Router** 的 `get_last`。此前仅拆分 Launcher 的专项测试因此不能覆盖该失败。
+- `simple_http_server.send_response()` 在本轮响应头修复中新增读取 `self.close_connection` 和 `self.request_version`；完整 HTTP handler 会在请求解析时设置它们，但模块使用的轻量 `ControlHandler` 不调用基类构造函数，也没有初始化这两个属性。
+- 使用真实 `smart_router.local.web_control.ControlHandler` 做最小复现，调用 `send_response()` 稳定得到 `AttributeError: 'ControlHandler' object has no attribute 'close_connection'`；仅为诊断临时补齐两个属性后，同一对象立即生成正常 200 响应。未修改源码。
+- Smart Router 的 log/status、X-Tunnel 的 log/status 均复现断开或超时。`x_tunnel.log` 中 `NoneType.text` 是本地模块 API 无响应后的下游表现，不是独立根因。
+- Smart Router、X-Tunnel、GAE Proxy 以及各 front 的七个 `ControlHandler` 都采用相同轻量构造模式，影响范围应按全部模块控制接口处理。
+- 既有 keepalive 测试只覆盖经过完整 `handle_one_request()` 的 handler，没有覆盖轻量 `ControlHandler`，所以离线 26 个测试文件全绿仍未发现此回归。
+
+**建议修复顺序：**先增加真实轻量控制器的 RED 回归测试，再在公共响应出口或基类中提供兼容默认状态，避免逐模块复制修复；随后运行完整离线套件、生产全模块日志/状态黑盒和多轮 F04。当前只完成诊断，尚未实施修复。
+
+### 代理超时：当前未持续复现
+
+- 早前一次 25 秒超时之后，相同代理 `generate_204` 连续两次返回 204。
+- 最新直连/代理对照中，代理返回 **204、约 0.598 秒**，直连反而在约 5 秒后被断开，说明当前本地代理转发链路可用。
+- 早前超时与 DNS、front、TLS 远端告警同时出现，但历史现场不足以确定唯一原因；不把该瞬时超时归入已确认的模块 Web API 回归，也不宣称代理问题已经修复。
 
 ## 当前已完成状态
 
@@ -64,7 +83,7 @@
 
 ## 后续工作优先级
 
-1. **重启验收已执行但未通过（下一步先诊断）**：优先复现并定位完整黑盒中的本地 Web API 断开，同时区分代理超时是本地转发故障还是远端/front 不可用；未定位前不继续修改生产代码。
+1. **模块 Web API 回归已定位（下一步修复）**：以轻量 `ControlHandler` 的 RED 测试驱动公共兼容修复，再部署并复验全部模块日志/状态接口；代理瞬时超时单独观察，不与该回归混同。
 2. **生产只读观察**：按正常负载观察异步日志尾账、writer 错误计数、front 超时、DNS 和会话背压；不主动注入生产故障，不以拆分用例 PASS 宣称间歇问题治愈。
 3. **真实模块离线性能测量**：保留合成账本，增加由离线替身驱动 ConnectManager、ProxySession、front 和 xlog 的测量，采集真实在途数、缓冲字节、writer 等待与丢弃计数。
 4. **持续回归与资源门槛**：在同机、同 Python、同种子下比较长 soak 的 p95/p99、线程、FD 和内存；只有 profiling 证明瓶颈后才考虑零复制、时间轮、asyncio 或窗口/worker 调参。
