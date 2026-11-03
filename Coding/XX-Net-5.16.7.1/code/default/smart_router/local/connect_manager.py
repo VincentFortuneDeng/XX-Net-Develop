@@ -51,12 +51,23 @@ class ConnectManager(object):
         self.connection_timeout = connection_timeout
         self.connect_timeout = connect_timeout
         self.connect_threads = connect_threads
+        self.max_cache_per_host = max(1, connect_threads)
+        self.max_cache_total = max(16, connect_threads * 4)
 
         self.running = True
         threading.Thread(target=self.connection_check_worker, name="smart_router_conn_checker").start()
 
     def stop(self):
-        self.running = False
+        with self.lock:
+            self.running = False
+            connections = [cc["conn"] for cache in self.cache.values() for cc in cache]
+            self.cache = {}
+
+        for conn in connections:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def connection_check_worker(self):
         while self.running:
@@ -69,6 +80,8 @@ class ConnectManager(object):
                             if time_now - cc["create_time"] > self.connection_timeout:
                                 cache.remove(cc)
                                 cc["conn"].close()
+                        if not cache:
+                            self.cache.pop(host_port, None)
                     except:
                         pass
 
@@ -76,45 +89,61 @@ class ConnectManager(object):
 
     def add_sock(self, host_port, sock):
         with self.lock:
-            if host_port not in self.cache:
-                self.cache[host_port] = []
-            self.cache[host_port].append({"create_time": time.time(), "conn": sock})
+            cache = self.cache.setdefault(host_port, [])
+            total = sum(len(connections) for connections in self.cache.values())
+            if not self.running or len(cache) >= self.max_cache_per_host or total >= self.max_cache_total:
+                if not cache:
+                    self.cache.pop(host_port, None)
+            else:
+                cache.append({"create_time": time.time(), "conn": sock})
+                return
+
+        try:
+            sock.close()
+        except Exception:
+            pass
 
     def get_sock_from_cache(self, host_port):
         time_now = time.time()
+        conn = None
         with self.lock:
-            if host_port in self.cache:
-                cache = self.cache[host_port]
-                while len(cache):
+            cache = self.cache.get(host_port)
+            if cache is not None:
+                while cache:
                     try:
                         cc = cache.pop(0)
                         if time_now - cc["create_time"] > self.connection_timeout:
                             cc["conn"].close()
                             continue
 
-                        return cc["conn"]
+                        conn = cc["conn"]
+                        break
                     except Exception as e:
                         xlog.exception("get_conn:%r", e)
                         break
+                if not cache:
+                    self.cache.pop(host_port, None)
+        return conn
 
     def create_connect(self, queue, host, ip, port, timeout=5):
         ip = utils.to_bytes(ip)
-        if int(g.config.PROXY_ENABLE):
-            sock = socks.socksocket(socket.AF_INET if b':' not in ip else socket.AF_INET6)
-        else:
-            sock = socket.socket(socket.AF_INET if b':' not in ip else socket.AF_INET6)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # set struct linger{l_onoff=1,l_linger=0} to avoid 10048 socket error
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
-        # resize socket recv buffer 8K->32K to improve browser releated application performance
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 512 * 1024)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 512 * 1024)
-
-        sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, True)
-        sock.settimeout(timeout)
-
-        start_time = time.time()
+        sock = None
         try:
+            if int(g.config.PROXY_ENABLE):
+                sock = socks.socksocket(socket.AF_INET if b':' not in ip else socket.AF_INET6)
+            else:
+                sock = socket.socket(socket.AF_INET if b':' not in ip else socket.AF_INET6)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # set struct linger{l_onoff=1,l_linger=0} to avoid 10048 socket error
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+            # resize socket recv buffer 8K->32K to improve browser releated application performance
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 512 * 1024)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 512 * 1024)
+
+            sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, True)
+            sock.settimeout(timeout)
+
+            start_time = time.time()
             sock.connect((ip, port))
             time_cost = (time.time() - start_time) * 1000
             # xlog.debug("connect %s %s:%d time:%d", host, ip, port, time_cost)
@@ -125,6 +154,11 @@ class ConnectManager(object):
             queue.put(True)
         except Exception as e:
             # xlog.debug("connect %s %s:%d fail:%r", host, ip, port, e)
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
             g.ip_cache.report_connect_fail(ip, port)
             queue.put(False)
 
@@ -151,28 +185,27 @@ class ConnectManager(object):
         ordered_ips = [ip for ip, rate in ip_time]
 
         wait_queue = Queue()
-        wait_t = 0.2
-        for ip in ordered_ips:
-            threading.Thread(target=self.create_connect, args=(wait_queue, host, ip, port),
-                             name="smart_router_create_conn_%s" % ip).start()
-            try:
-                status = wait_queue.get(timeout=wait_t)
-                sock = self.get_sock_from_cache(host_port)
-                if sock:
-                    return sock
-            except:
-                time.sleep(wait_t)
-                wait_t += 0.1
+        next_ip = 0
+        active = 0
+        while next_ip < len(ordered_ips) or active:
+            while next_ip < len(ordered_ips) and active < self.connect_threads and time.time() < end_time:
+                ip = ordered_ips[next_ip]
+                next_ip += 1
+                active += 1
+                threading.Thread(target=self.create_connect, args=(wait_queue, host, ip, port),
+                                 name="smart_router_create_conn_%s" % ip).start()
 
-        while True:
             time_left = end_time - time.time()
             if time_left <= 0:
-                return self.get_sock_from_cache(host_port)
+                break
 
             try:
-                status = wait_queue.get(timeout=time_left)
+                wait_queue.get(timeout=time_left)
+                active -= 1
                 sock = self.get_sock_from_cache(host_port)
                 if sock:
                     return sock
-            except:
-                pass
+            except Exception:
+                break
+
+        return self.get_sock_from_cache(host_port)
