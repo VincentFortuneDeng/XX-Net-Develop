@@ -1,3 +1,4 @@
+import contextlib
 import importlib.util
 import io
 from pathlib import Path
@@ -7,7 +8,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 LIB = ROOT / "Coding" / "XX-Net-5.16.7.1" / "code" / "default" / "lib" / "noarch"
+APP = LIB.parents[1]
 sys.path.insert(0, str(LIB))
+sys.path.insert(0, str(APP))
 SPEC = importlib.util.spec_from_file_location("simple_http_server_keepalive", LIB / "simple_http_server.py")
 server_module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(server_module)
@@ -130,6 +133,25 @@ class KeepAliveStateTest(unittest.TestCase):
         handler.handle_one_request()
 
         self.assertEqual(handler.close_connection, 1)
+
+
+class LightweightControlHandlerTest(unittest.TestCase):
+    def test_real_controller_responds_without_full_http_request_state(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            from smart_router.local.web_control import ControlHandler
+
+        output = io.BytesIO()
+        handler = ControlHandler(
+            ("127.0.0.1", 12345), {}, b"GET", b"/log", io.BytesIO(), output)
+        handler.set_CORS({})
+
+        handler.send_response("text/plain", "{}")
+
+        self.assertEqual(
+            output.getvalue(),
+            b"HTTP/1.1 200\r\nContent-Type: text/plain\r\n"
+            b"Content-Length: 2\r\n\r\n{}",
+        )
 
 
 if __name__ == "__main__":
