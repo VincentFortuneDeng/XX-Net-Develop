@@ -758,7 +758,10 @@ class CombineDnsQuery():
             query_dns_from_xxnet
         ])
 
-    def query(self, domain, dns_type=1, history=[]):
+    def query(self, domain, dns_type=1, history=None):
+        if history is None:
+            history = []
+
         domain = utils.to_bytes(domain)
         if utils.check_ip_valid(domain):
             return [domain]
