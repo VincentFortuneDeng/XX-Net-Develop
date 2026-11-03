@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PROD = Path('/Applications/XX-Net')
 BASE = 'http://127.0.0.1:8085'
 results = []
+# 本地 Web 验收必须直连，避免系统代理把 127.0.0.1 转发回 XX-Net。
+local_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def record(item, ok, evidence):
@@ -22,7 +24,7 @@ def record(item, ok, evidence):
 
 def fetch(url, timeout=10):
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        with local_opener.open(url, timeout=timeout) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as error:
         return error.code, error.read()
