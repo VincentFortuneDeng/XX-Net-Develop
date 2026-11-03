@@ -634,7 +634,7 @@ class Conn(object):
         self.next_recv_seq = 1
 
     def start(self, block):
-        if self.sock:
+        if self.sock and not self.session.read_paused:
             self.connection_pipe.add_sock_event(self.sock, self, selectors.EVENT_READ)
 
     def status(self):
@@ -788,7 +788,7 @@ class Conn(object):
                 if position > self.remote_acked_position:
                     self.remote_acked_position = position
 
-                    self.connection_pipe.add_sock_event(self.sock, self, selectors.EVENT_READ)
+                    self.session.update_backpressure()
 
             elif cmd_id == 2:  # Closed
                 dat = data.get()
@@ -821,7 +821,7 @@ class Conn(object):
                     self.xlog.info("Conn session:%s conn:%d %s:%d", self.session.session_id, self.conn_id, self.host,
                               self.port)
                     self.sock = sock
-                    self.connection_pipe.add_sock_event(self.sock, self, selectors.EVENT_READ)
+                    self.session.update_backpressure()
             else:
                 self.xlog.error("Conn session:%s conn:%d unknown cmd_id:%d",
                                 self.session.session_id, self.conn_id, cmd_id)

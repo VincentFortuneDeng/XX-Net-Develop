@@ -70,6 +70,8 @@ class ProxySession(object):
         self.resend_timeout = g.config.resend_timeout / 1000.0
 
         self.running = False
+        self.read_paused = False
+        self.buffered_bytes = 0
         self.round_trip_thread = {}
         self.session_id = utils.generate_random_lowercase(8)
         self.last_conn_id = 0
@@ -140,6 +142,8 @@ class ProxySession(object):
             # sn => ack
             self.wait_ack_send_list = dict()
             self.ack_send_continue_sn = 0
+            self.read_paused = False
+            self.buffered_bytes = 0
 
             self.received_sn = []
             self.receive_next_sn = 1
@@ -225,6 +229,10 @@ class ProxySession(object):
 
                 self.close_all_connection()
                 self.send_buffer.reset()
+                if hasattr(self, "wait_ack_send_list"):
+                    self.wait_ack_send_list = {}
+                self.read_paused = False
+                self.buffered_bytes = 0
                 receive_tail = self.receive_process.reset(defer_log=True)
                 self.wait_queue.stop()
                 self.connection_pipe.stop()
@@ -546,6 +554,26 @@ class ProxySession(object):
         if len(self.conn_list) == 0:
             self.target_on_roads = 0
 
+    def _update_backpressure_locked(self):
+        if not self.read_paused and self.buffered_bytes >= self.config.session_buffer_high_water:
+            self.read_paused = True
+        elif self.read_paused and self.buffered_bytes <= self.config.session_buffer_low_water:
+            self.read_paused = False
+
+        for conn in list(self.conn_list.values()):
+            if not conn.sock or not conn.running:
+                continue
+
+            conn_unacked = conn.received_position - conn.remote_acked_position
+            if self.read_paused or conn_unacked > conn.windows_size:
+                conn.connection_pipe.remove_sock_event(conn.sock, base_container.selectors.EVENT_READ)
+            else:
+                conn.connection_pipe.add_sock_event(conn.sock, conn, base_container.selectors.EVENT_READ)
+
+    def update_backpressure(self):
+        with self.lock:
+            self._update_backpressure_locked()
+
     def send_conn_data(self, conn_id, data):
         if not self.running:
             xlog.warn("send_conn_data but not running")
@@ -555,13 +583,17 @@ class ProxySession(object):
         buf = base_container.WriteBuffer()
         buf.append(struct.pack("<II", conn_id, len(data)))
         buf.append(data)
-        self.send_buffer.put(buf)
+        with self.lock:
+            self.send_buffer.put(buf)
+            self.buffered_bytes += len(buf)
 
         if self.oldest_received_time == 0:
             self.oldest_received_time = time.time()
         elif self.send_buffer.pool_size > g.config.max_payload:
             # xlog.debug("notify on send conn data")
             self.wait_queue.notify()
+
+        self.update_backpressure()
 
     @staticmethod
     def sn_payload_head(sn, payload):
@@ -668,7 +700,10 @@ class ProxySession(object):
                 sn = struct.unpack("<I", ack.get(4))[0]
                 # xlog.debug("ack: %d", sn)
                 if sn in self.wait_ack_send_list:
-                    self.wait_ack_send_list[sn] = "acked"
+                    pending = self.wait_ack_send_list[sn]
+                    if not isinstance(pending, str):
+                        self.buffered_bytes -= len(pending[0])
+                        self.wait_ack_send_list[sn] = "acked"
 
             for sn in self.wait_ack_send_list:
                 if sn > last_ack:
@@ -677,12 +712,17 @@ class ProxySession(object):
                     continue
 
                 # xlog.debug("last_ack:%d sn:%d", last_ack, sn)
+                pending = self.wait_ack_send_list[sn]
+                if not isinstance(pending, str):
+                    self.buffered_bytes -= len(pending[0])
                 self.wait_ack_send_list[sn] = "acked"
 
             while (self.ack_send_continue_sn + 1) in self.wait_ack_send_list and \
                     self.wait_ack_send_list[self.ack_send_continue_sn + 1] == "acked":
                 self.ack_send_continue_sn += 1
                 del self.wait_ack_send_list[self.ack_send_continue_sn]
+
+            self._update_backpressure_locked()
 
         except Exception as e:
             xlog.exception("ack_process:%r", e)
