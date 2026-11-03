@@ -114,8 +114,9 @@ git commit -m "fix: 按综合成本选择 TLS Relay 线路"
 
 ## 2026-11-03 执行记录
 
-- Task 1 提交：`850a855`；fake iptables 行为测试 **5/5 PASS**，`bash -n` 通过。
-- Task 2 提交：`a86c7fd`；TLS Relay 测试 **8/8 PASS**，既有独立模型 **30/30 PASS**。
+- Task 1 提交：`850a855`；最终 fake iptables 行为测试 **10/10 PASS**，`bash -n` 通过。
+- Task 2 提交：`a86c7fd`；最终 TLS Relay 测试 **10/10 PASS**，既有独立模型 **30/30 PASS**。
 - 既有 IPv6 独立模型使用手工配置，按 `ConfigBase` 真实默认值补 `ip_cal_expect_time_package_size=40000`，未在生产代码中增加静默默认值。
+- 新鲜整体审查的三项 Important（超大整数 adjust、异常 speed/RTT、iptables 操作失败返回成功）已各以失败测试复现并在一轮集中修复中转绿；未进行第二轮扩大修改。
 - 最终生产只读黑盒 **9/10 PASS**：历史 F04 的默认 HTTP/1.1 24 路 `/debug` 中一路超时、一路连接重置；显式 `Connection: close` 组和代理 `generate_204` 通过。未据此扩大结论。
 - 不执行真实 iptables，不部署、不重启、不 push。

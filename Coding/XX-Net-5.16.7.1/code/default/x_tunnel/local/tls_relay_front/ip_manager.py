@@ -111,16 +111,21 @@ class IpManager(IpManagerBase):
                 continue
 
             speed, rtt = self.get_speed(ip_str)
-            if speed <= 0 or not math.isfinite(speed):
-                self.logger.debug("get_ip_sni_host skip %s: invalid speed %r", ip_str, speed)
-                continue
             try:
+                speed = float(speed)
+                rtt = float(rtt)
                 adjust = float(ip_info.get("adjust", 0))
-            except (TypeError, ValueError):
-                self.logger.debug("get_ip_sni_host skip %s: invalid adjust %r", ip_str, ip_info.get("adjust"))
+            except (TypeError, ValueError, OverflowError):
+                self.logger.debug(
+                    "get_ip_sni_host skip %s: invalid speed %r rtt %r adjust %r",
+                    ip_str, speed, rtt, ip_info.get("adjust"),
+                )
                 continue
-            if not math.isfinite(adjust):
-                self.logger.debug("get_ip_sni_host skip %s: non-finite adjust %r", ip_str, ip_info.get("adjust"))
+            if speed <= 0 or not all(math.isfinite(value) for value in (speed, rtt, adjust)):
+                self.logger.debug(
+                    "get_ip_sni_host skip %s: non-finite or non-positive metric speed %r rtt %r adjust %r",
+                    ip_str, speed, rtt, adjust,
+                )
                 continue
             score = rtt + self.config.ip_cal_expect_time_package_size / speed + adjust
             if score < best_score:

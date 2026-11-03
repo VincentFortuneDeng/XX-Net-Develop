@@ -45,8 +45,8 @@
 | `../../tests/test_log_view_export.py` | O 阶段 startup/warning 视图、损坏记录与七模块 Web 走线：V1–V10，共 10/10 PASS |
 | `../../tests/test_log_diagnostic_pack.py` | O 阶段视图收集、禁用模块零请求、预算、优先级、脱敏和 legacy 边界：P1–P10，共 10/10 PASS |
 | `../../tests/test_persistent_lifecycle_logs.py` | O 阶段 AST 契约：只允许八处指定生命周期 INFO 使用 `persist=True` |
-| `../../tests/test_iptables_idempotent.py` | P 阶段：临时有状态 fake iptables 验证首次/重复 set、历史重复 jump、多接口 chain 保留、无规则 unset 和退出码，共 5/5 PASS；不执行真实防火墙命令 |
-| `../../tests/test_tls_relay_adjust.py` | P 阶段：固定 RTT/speed/adjust 评分、缺省与负值、非法/非有限输入、IPv4/IPv6 传递和过滤、链接状态及 worker 阈值，共 8/8 PASS |
+| `../../tests/test_iptables_idempotent.py` | P 阶段：临时有状态 fake iptables 验证首次/重复 set、历史重复 jump、多接口 chain 保留、无规则 unset、退出码及五类查询/修改失败，共 10/10 PASS；不执行真实防火墙命令 |
+| `../../tests/test_tls_relay_adjust.py` | P 阶段：固定 RTT/speed/adjust 评分、缺省与负值、非法/非有限/超大整数输入、异常缓存 RTT、IPv4/IPv6 传递和过滤、链接状态及 worker 阈值，共 10/10 PASS |
 
 ## 修复阶段索引（详见 docs/XX-Net-macOS-ARM64-修复记录.md）
 
@@ -65,7 +65,7 @@
 - **M 阶段（生命周期尾账结算，2026-10-31，已部署并重启）**：`LogThrottle.flush()` 原子结算、清账并封口，`reset()` 开启新生命周期；接入 dispatcher、ConnectManager、ProxySession、BlockReceivePool.reset 与 front_dispatcher.stop，每个对象最多一条汇总 WARN，不逐 key、不后台线程。独立审查三项 Important（stop 后迟到事件、外层锁内日志、清理异常跳过结算）均一轮 RED→GREEN 修复；xlog 38/38、dispatcher 12/12、x_tunnel 14/14、SN 9/9，完整回归通过；http1 类级 HEAD 账本没有安全全局终点，保持现状。已随 K/L 重启加载；约 20 小时生产观察已出现 16 条 transfer final 聚合尾账，证明真实 stop/reset 终点可落盘，其余终点按实际事件继续观察
 - **N 阶段（启动失败清理与测试隔离，2026-11-01，已部署并重启）**：代理 Server 构造/启动失败时按 `dns_srv → dns_query → pipe_socks → connect_manager` 各尝试 stop，清理异常写日志但不遮蔽原始异常，ready=False；正常 K 启动顺序与正常 stop 不变。S3/S4 与独立 sys.modules 隔离回归均 RED→GREEN，S1–S4、xlog 38/38、dispatcher 12/12、x_tunnel 14/14、SN 9/9、DNS 9/9、五套既有回归与 fd 探针通过。2026-11-01 19:28 仅部署 `smart_router/local/__init__.py`，备份于 `backups/pre-rsync-20261101-n/`；部署 cmp 一致，SHA-256 为 `335f2090b3b525a98c4e679c0db1ea79411ef026cfb1f39a71c1687846fd14a8`。用户重启后 PID 43995（19:33:14）加载，8086 LISTEN；首次代理请求 20 秒超时，随后两次 generate_204 均 204。启动日志 ERROR/Traceback 为 0，代理正常启动，N 清理路径未触发，未 push
 - **O 阶段（统一日志存储与有界错误上下文，2026-11-02，开发完成未部署）**：每个已有持久 Logger 统一写 `<name>.log`，仅保留单代 `.1`；启动详细期后普通 DEBUG/INFO 仅内存，重要项可 `persist=True`，WARNING+ 持续落盘。ERROR/CRITICAL 从同一内存 buffer 导出近期 DEBUG/INFO，最多 40 条、16KiB、同原始 fmt 冷却 60 秒，本体和 exception 堆栈不受冷却影响。新增 startup/warning 按需视图，诊断包按明确优先级与 10MiB 未压缩预算装包；仅八处生命周期 INFO 显式持久化。新测试 U/C 19、V 10、P 10、生命周期契约 1 项均通过，旧 xlog 38/38 与计划完整回归通过，fd 探针 A(detached)。独立审查一项 Critical、两项 Important 均一轮 RED→GREEN 修复。2026-11-03 已将 13 个生产文件部署至 `/Applications/XX-Net`，备份于 `backups/pre-rsync-20261103-o/`，逐文件字节校验一致；用户重启后 PID 5445（00:31:23）加载，1080/8085/8086 正常监听，两次代理 204，六启用模块视图与原内存 JSON 正常，本次统一正文无 ERROR/CRITICAL/Traceback，旧 warning 未再写入。错误上下文、滚动和诊断上传未触发，不扩大疗效结论；未 push。
-- **P 阶段（上游 iptables 与 TLS Relay 修复，2026-11-03，开发完成未部署）**：分别迁移官方 054daa66 与 8613cd7b，独立 RED→GREEN 和独立提交。iptables 5/5、TLS Relay 8/8、既有独立模型 30/30 PASS；`start` Shell 语法检查与提交差异检查通过。生产只读黑盒 9/10 PASS，唯一失败仍为历史 F04：默认 HTTP/1.1 的 24 路 `/debug` 中一路超时、一路连接重置；显式 close 组及代理 204 通过。本轮未部署、未重启、未 push，不将离线结果写成生产疗效。
+- **P 阶段（上游 iptables 与 TLS Relay 修复，2026-11-03，开发完成未部署）**：分别迁移官方 054daa66 与 8613cd7b，独立 RED→GREEN 和独立提交。新鲜整体审查发现极大整数 adjust、异常 speed/RTT 缓存和 iptables 操作失败返回成功三项 Important，均在一轮修复中先 RED 后 GREEN；iptables 10/10、TLS Relay 10/10、既有独立模型 30/30 PASS，`start` Shell 语法与差异检查通过。生产只读黑盒 9/10 PASS，唯一失败仍为历史 F04：默认 HTTP/1.1 的 24 路 `/debug` 中一路超时、一路连接重置；显式 close 组及代理 204 通过。本轮未部署、未重启、未 push，不将离线结果写成生产疗效。
 
 ## 已知评估后接受项
 

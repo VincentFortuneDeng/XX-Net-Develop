@@ -229,18 +229,18 @@ set_iptables(){
     INF="${1:-br-lan}"
     echo "set interface $INF"
 
-    iptables -t nat -N REDSOCKS 2>/dev/null || iptables -t nat -F REDSOCKS
-    iptables -t nat -A REDSOCKS -d 0.0.0.0/8 -j RETURN
-    iptables -t nat -A REDSOCKS -d 10.0.0.0/8 -j RETURN
-    iptables -t nat -A REDSOCKS -d 127.0.0.0/8 -j RETURN
-    iptables -t nat -A REDSOCKS -d 169.254.0.0/16 -j RETURN
-    iptables -t nat -A REDSOCKS -d 172.16.0.0/12 -j RETURN
-    iptables -t nat -A REDSOCKS -d 192.168.0.0/16 -j RETURN
-    iptables -t nat -A REDSOCKS -d 224.0.0.0/4 -j RETURN
-    iptables -t nat -A REDSOCKS -d 240.0.0.0/4 -j RETURN
-    iptables -t nat -A REDSOCKS -p tcp -j REDIRECT --to-ports 8086
+    iptables -t nat -N REDSOCKS 2>/dev/null || iptables -t nat -F REDSOCKS 2>/dev/null || exit 1
+    iptables -t nat -A REDSOCKS -d 0.0.0.0/8 -j RETURN || exit 1
+    iptables -t nat -A REDSOCKS -d 10.0.0.0/8 -j RETURN || exit 1
+    iptables -t nat -A REDSOCKS -d 127.0.0.0/8 -j RETURN || exit 1
+    iptables -t nat -A REDSOCKS -d 169.254.0.0/16 -j RETURN || exit 1
+    iptables -t nat -A REDSOCKS -d 172.16.0.0/12 -j RETURN || exit 1
+    iptables -t nat -A REDSOCKS -d 192.168.0.0/16 -j RETURN || exit 1
+    iptables -t nat -A REDSOCKS -d 224.0.0.0/4 -j RETURN || exit 1
+    iptables -t nat -A REDSOCKS -d 240.0.0.0/4 -j RETURN || exit 1
+    iptables -t nat -A REDSOCKS -p tcp -j REDIRECT --to-ports 8086 || exit 1
     iptables -t nat -C PREROUTING -i "$INF" -p tcp -j REDSOCKS 2>/dev/null || \
-        iptables -t nat -A PREROUTING -i "$INF" -p tcp -j REDSOCKS
+        iptables -t nat -A PREROUTING -i "$INF" -p tcp -j REDSOCKS || exit 1
     exit 0
 }
 
@@ -248,9 +248,16 @@ unset_iptables(){
     INF="${1:-br-lan}"
 
     while iptables -t nat -D PREROUTING -i "$INF" -p tcp -j REDSOCKS 2>/dev/null; do :; done
-    if ! iptables -t nat -S PREROUTING | grep -q -- "-j REDSOCKS"; then
-        iptables -t nat -F REDSOCKS 2>/dev/null
-        iptables -t nat -X REDSOCKS 2>/dev/null
+    PREROUTING_RULES=$(iptables -t nat -S PREROUTING 2>/dev/null) || exit 1
+    if printf '%s\n' "$PREROUTING_RULES" | grep -F -- "-i $INF " | grep -q -- "-j REDSOCKS"; then
+        exit 1
+    fi
+    if ! printf '%s\n' "$PREROUTING_RULES" | grep -q -- "-j REDSOCKS"; then
+        NAT_RULES=$(iptables -t nat -S 2>/dev/null) || exit 1
+        if printf '%s\n' "$NAT_RULES" | grep -q -- '-N REDSOCKS$'; then
+            iptables -t nat -F REDSOCKS 2>/dev/null || exit 1
+            iptables -t nat -X REDSOCKS 2>/dev/null || exit 1
+        fi
     fi
     exit 0
 }

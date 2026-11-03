@@ -183,6 +183,50 @@ class TlsRelayAdjustTest(unittest.TestCase):
         debug_messages = [event[1] for event in manager.logger.events if event[0] == "DEBUG"]
         self.assertEqual(len(debug_messages), 3)
 
+    def test_huge_integer_adjust_is_skipped(self):
+        hosts = {
+            "192.0.2.5": host(adjust=10 ** 400),
+            "192.0.2.6": host(adjust=-(10 ** 400)),
+            "192.0.2.7": host(),
+        }
+        manager = make_manager(
+            hosts,
+            {
+                "192.0.2.5:443": (100, 1),
+                "192.0.2.6:443": (100, 1),
+                "192.0.2.7:443": (100, 10),
+            },
+        )
+
+        selected = manager.get_ip_sni_host()
+
+        self.assertEqual(selected["ip_str"], "192.0.2.7:443")
+        debug_messages = [event[1] for event in manager.logger.events if event[0] == "DEBUG"]
+        self.assertEqual(len(debug_messages), 2)
+
+    def test_invalid_speed_and_rtt_from_cache_are_skipped(self):
+        hosts = {
+            "192.0.2.8": host(),
+            "192.0.2.9": host(),
+            "192.0.2.10": host(),
+            "192.0.2.11": host(),
+        }
+        manager = make_manager(
+            hosts,
+            {
+                "192.0.2.8:443": (10 ** 400, 1),
+                "192.0.2.9:443": (100, None),
+                "192.0.2.10:443": (100, "invalid"),
+                "192.0.2.11:443": (100, 10),
+            },
+        )
+
+        selected = manager.get_ip_sni_host()
+
+        self.assertEqual(selected["ip_str"], "192.0.2.11:443")
+        debug_messages = [event[1] for event in manager.logger.events if event[0] == "DEBUG"]
+        self.assertEqual(len(debug_messages), 3)
+
     def test_negative_adjust_participates_in_score(self):
         hosts = {
             "192.0.2.2": host(adjust=0),

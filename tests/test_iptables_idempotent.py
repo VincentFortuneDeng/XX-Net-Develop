@@ -40,11 +40,15 @@ if args[:2] == ["-t", "nat"]:
 if not args:
     sys.exit(2)
 
-command, chain = args[0], args[1]
+command = args[0]
+chain = args[1] if len(args) > 1 else None
 rule = args[2:]
 chains = state["chains"]
 prerouting = state["prerouting"]
 result = 0
+
+if os.environ.get("FAKE_IPTABLES_FAIL") == "%s %s" % (command, chain):
+    sys.exit(1)
 
 
 def interface(arguments):
@@ -90,6 +94,11 @@ elif command == "-D" and chain == "REDSOCKS":
     else:
         chains[chain].remove(rule)
 elif command == "-S" and chain == "PREROUTING":
+    for item in prerouting:
+        print("-A PREROUTING -i %s -p tcp -j REDSOCKS" % item)
+elif command == "-S" and chain is None:
+    for name in chains:
+        print("-N %s" % name)
     for item in prerouting:
         print("-A PREROUTING -i %s -p tcp -j REDSOCKS" % item)
 else:
@@ -140,14 +149,17 @@ class IptablesIdempotentTest(unittest.TestCase):
             return {"chains": {}, "prerouting": []}
         return json.loads(self.state_path.read_text(encoding="utf-8"))
 
-    def run_function(self, function, interface=None):
+    def run_function(self, function, interface=None, failure=None):
         args = [function] + ([interface] if interface is not None else [])
+        env = self.env.copy()
+        if failure is not None:
+            env["FAKE_IPTABLES_FAIL"] = failure
         return subprocess.run(
             ["/bin/sh", "-s", "--"] + args,
             input=self.functions + '\n"$@"\n',
             text=True,
             capture_output=True,
-            env=self.env,
+            env=env,
             timeout=5,
             check=False,
         )
@@ -199,6 +211,38 @@ class IptablesIdempotentTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.state(), {"chains": {}, "prerouting": []})
+
+    def test_set_reports_chain_rule_failure(self):
+        result = self.run_function("set_iptables", failure="-A REDSOCKS")
+
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_set_reports_prerouting_append_failure(self):
+        result = self.run_function("set_iptables", failure="-A PREROUTING")
+
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_unset_reports_prerouting_list_failure(self):
+        self.seed(["br-lan"], list(CHAIN_RULES))
+
+        result = self.run_function("unset_iptables", failure="-S PREROUTING")
+
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_unset_reports_delete_failure_when_jump_remains(self):
+        self.seed(["br-lan"], list(CHAIN_RULES))
+
+        result = self.run_function("unset_iptables", failure="-D PREROUTING")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.state()["prerouting"], ["br-lan"])
+
+    def test_unset_reports_chain_flush_failure(self):
+        self.seed(["br-lan"], list(CHAIN_RULES))
+
+        result = self.run_function("unset_iptables", failure="-F REDSOCKS")
+
+        self.assertNotEqual(result.returncode, 0)
 
     def test_unset_dispatch_returns_zero(self):
         self.seed(["br-lan"], list(CHAIN_RULES))
