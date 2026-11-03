@@ -74,6 +74,7 @@ def init():
         front.start()
 
     threading.Thread(target=front_staticstic_thread, name="front_statistic_thread").start()
+    notify_front_change()
 
 
 def save_cloudflare_domain(domains):
@@ -97,46 +98,57 @@ def front_staticstic_thread():
 
             dispatcher.statistic()
 
+        notify_front_change()
         time.sleep(3)
 
 get_front_lock = Lock()
+get_front_condition = threading.Condition(get_front_lock)
+
+
+def notify_front_change():
+    with get_front_condition:
+        get_front_condition.notify_all()
+
 
 def get_front(host, timeout):
     start_time = time.time()
-    if host in ["dns.xx-net.org", g.config.api_server]:
-        fronts = light_fronts
-    else:
-        fronts = session_fronts
+    while time.time() - start_time < timeout:
+        with get_front_condition:
+            if host in ["dns.xx-net.org", g.config.api_server]:
+                fronts = list(light_fronts)
+            else:
+                fronts = list(session_fronts)
+            current_cloudflare_front = cloudflare_front
+            server_host = g.server_host
 
-    with get_front_lock:
-        while time.time() - start_time < timeout:
-            best_front = None
-            best_score = 999999999
-            for front in fronts:
-                if host == "dns.xx-net.org" and front == cloudflare_front and g.server_host:
-                    # share the x-tunnel connection with dns.xx-net.org
-                    # x-tunnel server will forward the request to dns.xx-net.org
-                    host = g.server_host
+        best_front = None
+        best_score = 999999999
+        for front in fronts:
+            if host == "dns.xx-net.org" and front == current_cloudflare_front and server_host:
+                # share the x-tunnel connection with dns.xx-net.org
+                # x-tunnel server will forward the request to dns.xx-net.org
+                host = server_host
 
-                dispatcher = front.get_dispatcher(host)
-                if not dispatcher:
-                    # xlog.warn("get dispatcher from %s fail for %s", front.name, host)
-                    continue
+            dispatcher = front.get_dispatcher(host)
+            if not dispatcher:
+                # xlog.warn("get dispatcher from %s fail for %s", front.name, host)
+                continue
 
-                score = dispatcher.get_score()
-                if not score:
-                    if front.config.show_state_debug:
-                        xlog.warn("get_front get_score failed for %s ", front.name)
-                    continue
+            score = dispatcher.get_score()
+            if not score:
+                if front.config.show_state_debug:
+                    xlog.warn("get_front get_score failed for %s ", front.name)
+                continue
 
-                if score < best_score:
-                    best_score = score
-                    best_front = front
+            if score < best_score:
+                best_score = score
+                best_front = front
 
-            if best_front is not None:
-                return best_front
+        if best_front is not None:
+            return best_front
 
-            time.sleep(0.005)
+        with get_front_condition:
+            get_front_condition.wait(0.005)
 
     g.stat["timeout_roundtrip"] += 5
     return None
@@ -227,11 +239,14 @@ def stop():
         for front in all_fronts:
             front.stop()
 
-        all_fronts = []
-        light_fronts = []
-        session_fronts = []
-        cloudflare_front = None
+        with get_front_condition:
+            all_fronts = []
+            light_fronts = []
+            session_fronts = []
+            cloudflare_front = None
+            get_front_condition.notify_all()
     finally:
+        notify_front_change()
         suppressed, key_count = front_retry_log_throttle.flush()
         if suppressed:
             xlog.warn("front retry final suppressed:%d keys:%d", suppressed, key_count)
