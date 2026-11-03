@@ -1,7 +1,7 @@
 # 可靠性与性能路线图部署及状态记录
 
 日期：2026-11-03  
-运行代码来源提交：`7e888ae`  
+初始部署来源提交：`7e888ae`；轻量控制器修复来源提交：`2c1d0ff`
 授权：用户明确回复“可以进行部署，并梳理当前完成状态和后续工作”。
 
 ## 部署范围
@@ -73,21 +73,39 @@
 - 最新直连/代理对照中，代理返回 **204、约 0.598 秒**，直连反而在约 5 秒后被断开，说明当前本地代理转发链路可用。
 - 早前超时与 DNS、front、TLS 远端告警同时出现，但历史现场不足以确定唯一原因；不把该瞬时超时归入已确认的模块 Web API 回归，也不宣称代理问题已经修复。
 
+## 轻量控制器回归修复与复验（2026-11-03 22:48–23:01）
+
+### 测试先行与公共修复
+
+- 在 `tests/test_simple_http_server_keepalive.py` 直接使用真实 `smart_router.local.web_control.ControlHandler`，不补齐完整 HTTP 请求状态。修复前运行 10 项测试，新增用例如期以 `AttributeError: 'ControlHandler' object has no attribute 'close_connection'` 失败。
+- 公共修复只在 `send_response()` 读取两个请求状态时提供兼容默认值：轻量控制器维持原有无 `Connection` 响应头的行为；完整 handler 的显式 close、HTTP/1.0 keep-alive 和 HTTP/1.1 状态保持原路径。未在七个模块中复制补丁。
+- 修复后同一文件 10/10 通过，3 项性能基线自验通过，`git diff --check` 和修改文件编译检查通过。代码与回归测试提交为 `2c1d0ff fix: 兼容轻量控制器响应状态`。
+- 其余 25 个 `tests/test_*.py` 文件通过；旧 `test_ipv6_filter.py` 因直接加载生产 TLS Relay 文件、配置替身缺少此前评分功能新增的 `ip_cal_expect_time_package_size` 而失败。该失败与本次响应修复无关，本轮未借修测试扩大范围，因此不能写作完整 26 文件全绿。
+
+### 部署、重启与生产结果
+
+- 新备份：`backups/pre-rsync-20261103-control-handler-response/`。只部署 `code/default/lib/noarch/simple_http_server.py`，原文件、差异、原/新哈希和来源提交均已记录，生产文件与开发快照逐字节一致；SHA256 为 `67f00882b2fac7b4551f1fd66c7cb7d287d4192510dc4520aeff021aa95cc752`。
+- 旧 PID 67758 正常退出；新 PID **89760** 于 **2026-11-03 22:55:21** 启动，监听 1080、8085、8086。首次黑盒在启动窗口的 Launcher 配置请求被重置，单独复查配置返回 200 后重新验收。
+- 随后两次完整黑盒均 **9/10 PASS**：模块日志视图 `A22-http-contract` 和代理 `generate_204=204` 通过，显式 `Connection: close` 的 24 路 `/debug` 通过；唯一失败仍是默认 HTTP/1.1 并发 `/debug` 的重置/超时。不能把本次结果写成生产全量验收通过。
+- 五轮拆分专项中，Smart Router、X-Tunnel、Cloudflare、Seley、TLS Relay 的日志与状态请求共 **50/50** 成功；显式 close `/debug` 累计 **120/120** 成功。默认 `/debug` 累计 **112/120** 成功，五轮均出现至少一次重置或超时，说明该独立长连接问题仍未解决。
+- 重启后的生产日志未新增 `close_connection` 或 `NoneType.text` 目标异常；扫描到的同类条目均属于旧进程 11:06–11:07 的历史记录，未删除旧日志。
+
 ## 当前已完成状态
 
 - 路线图 Task 1–8 全部完成：HTTP 长连接、front 等待隔离、DNS 历史隔离、Direct 资源边界、X-Tunnel 背压、front 绝对 deadline、异步日志 writer、离线性能基线。
 - 整支新鲜上下文审查及一轮修复完成：包括 body/Direct deadline、manager 级建连上限、会话注册表竞争、无 ACK 背压恢复、DNS 迟到代际、日志异常和退出尾账。
 - 此前两项上游 P1 迁移也已部署：Linux iptables 幂等、TLS Relay 综合选线；本地 IPv6 过滤保留。
-- 最终离线验证：26 个测试文件、30 项独立模型和 3 项性能自验全部通过。
-- 当前运行代码提交 `7e888ae` 已部署到生产目录，并由 11:03:15 启动的新进程加载；重启后验收未通过，未 push。
+- 此前最终离线验证曾记录 26 个测试文件、30 项独立模型和 3 项性能自验全部通过；本次修复复跑为其余 25 个测试文件及 3 项性能自验通过，旧 IPv6 测试配置替身问题单独保留。
+- 生产 `simple_http_server.py` 已更新为 `2c1d0ff` 的修复版本并由 22:55:21 启动的 PID 89760 加载；模块 Web API 回归已通过生产复验，但完整黑盒仍因默认 `/debug` 长连接失败保持 9/10，未 push。
 
 ## 后续工作优先级
 
-1. **模块 Web API 回归已定位（下一步修复）**：以轻量 `ControlHandler` 的 RED 测试驱动公共兼容修复，再部署并复验全部模块日志/状态接口；代理瞬时超时单独观察，不与该回归混同。
-2. **生产只读观察**：按正常负载观察异步日志尾账、writer 错误计数、front 超时、DNS 和会话背压；不主动注入生产故障，不以拆分用例 PASS 宣称间歇问题治愈。
-3. **真实模块离线性能测量**：保留合成账本，增加由离线替身驱动 ConnectManager、ProxySession、front 和 xlog 的测量，采集真实在途数、缓冲字节、writer 等待与丢弃计数。
-4. **持续回归与资源门槛**：在同机、同 Python、同种子下比较长 soak 的 p95/p99、线程、FD 和内存；只有 profiling 证明瓶颈后才考虑零复制、时间轮、asyncio 或窗口/worker 调参。
-5. **分支集成另行决定**：当前保留 `fix/h-log-dns-backoff`，未合并 main、未 push、未创建 PR。
+1. **默认 `/debug` 长连接仍需独立诊断（下一优先级）**：模块 Web API 回归已修复并通过 50 项生产日志/状态检查，但完整黑盒继续稳定暴露默认 HTTP/1.1 并发重置/超时；显式 close 120/120 成功不能替代该项修复。
+2. **旧测试环境耦合另项处理**：`test_ipv6_filter.py` 直接加载生产文件且配置替身未同步 TLS Relay 评分字段；需要单独决定改为开发快照并更新配置契约，不与本次运行修复混入。
+3. **生产只读观察**：按正常负载观察异步日志尾账、writer 错误计数、front 超时、DNS 和会话背压；不主动注入生产故障，不以拆分用例 PASS 宣称间歇问题治愈。
+4. **真实模块离线性能测量**：保留合成账本，增加由离线替身驱动 ConnectManager、ProxySession、front 和 xlog 的测量，采集真实在途数、缓冲字节、writer 等待与丢弃计数。
+5. **持续回归与资源门槛**：在同机、同 Python、同种子下比较长 soak 的 p95/p99、线程、FD 和内存；只有 profiling 证明瓶颈后才考虑零复制、时间轮、asyncio 或窗口/worker 调参。
+6. **分支集成另行决定**：当前保留 `fix/h-log-dns-backoff`，未合并 main、未 push、未创建 PR。
 
 ## 未覆盖边界
 

@@ -49,12 +49,13 @@ for line in manifest.read_text().splitlines():
     backup_ok &= backup.read_bytes() == original
 record('A23-restore-proof', backup_ok, '13 份 .orig 同时匹配 SHA 清单和 ca93de4 基线')
 
-# 三轮已授权部署哈希仍与生产一致，后部署清单覆盖同路径旧哈希。
+# 累计已授权部署哈希仍与生产一致，后部署清单覆盖同路径旧哈希。
 expected_deployed = {}
 for deployed_manifest in (
         ROOT / 'backups/pre-rsync-20261103-o/DEPLOYED-SHA256SUMS',
         ROOT / 'backups/pre-rsync-20261103-independent-acceptance/DEPLOYED-SHA256SUMS',
-        ROOT / 'backups/pre-rsync-20261103-reliability-roadmap/DEPLOYED-SHA256SUMS'):
+        ROOT / 'backups/pre-rsync-20261103-reliability-roadmap/DEPLOYED-SHA256SUMS',
+        ROOT / 'backups/pre-rsync-20261103-control-handler-response/DEPLOYED-SHA256SUMS'):
     for line in deployed_manifest.read_text().splitlines():
         digest, relative = line.split('  ', 1)
         expected_deployed[relative] = digest

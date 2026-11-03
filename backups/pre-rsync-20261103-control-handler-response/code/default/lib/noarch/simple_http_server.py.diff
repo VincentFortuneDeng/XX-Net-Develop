@@ -1,0 +1,15 @@
+--- /Applications/XX-Net/code/default/lib/noarch/simple_http_server.py	2026-11-03 09:56:27
++++ /Users/solvan/Downloads/XX-Net-Develop/Coding/XX-Net-5.16.7.1/code/default/lib/noarch/simple_http_server.py	2026-11-03 22:50:56
+@@ -409,9 +409,10 @@
+                 data.append(headers.encode("utf-8"))
+             elif isinstance(headers, bytes):
+                 data.append(headers)
+-        if self.close_connection:
++        # 轻量控制器直接复用响应方法，没有经过 parse_request。
++        if getattr(self, "close_connection", 0):
+             data.append(b"Connection: close\r\n")
+-        elif self.request_version == b"HTTP/1.0":
++        elif getattr(self, "request_version", self.default_request_version) == b"HTTP/1.0":
+             data.append(b"Connection: keep-alive\r\n")
+         data.append(b"\r\n")
+ 
