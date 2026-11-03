@@ -194,8 +194,6 @@ class HttpServerHandler():
         try:
             self.parse_request()
 
-            self.close_connection = 0
-
             if self.upgrade == b"websocket":
                 self.do_WebSocket()
             elif self.command == b"GET":
