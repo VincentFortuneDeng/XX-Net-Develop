@@ -127,8 +127,10 @@ TDD 先新增三项回归测试，并确认 RED：均因 `ProxySession` 尚无 `
 
 提交 `165022f` 在既有 `front retry` 放行日志中增加实际 `front`、内部 `status`、`select` 和 `request` 秒数。新增测试先因旧格式不含这些字段而 RED，实现后 `test_front_request_deadline.py` 5/5 通过；X1–X14 节流回归全部通过，其中 X7 仍验证同 tid 聚合、不同 tid 独立，X10 的 stop 尾账格式未变。总 deadline、重试和节流键未改。
 
-新增 `tests/analyze_xtunnel_front_diagnostics.py`，以 `analyze_records(records: list[dict]) -> dict` 按字符串 tid 关联可见跨层记录，保留来源、时间、front、状态、轨迹最后状态和选择/请求耗时；输出 `visible_records`、`unique_tids`、`suppressed_reports` 与 `unmatched`，不生成“独立尝试数”。CLI 只接受显式日志及输出 JSON 路径。内存关联测试和带 INFO 排除、suppressed 与未匹配记录的 CLI 样本均通过。
+新增 `tests/analyze_xtunnel_front_diagnostics.py`，以 `analyze_records(records: list[dict]) -> dict` 按字符串 tid 关联可见跨层记录，保留来源、时间、会话标识、front、状态、轨迹最后状态和选择/请求耗时；输出 `visible_records`、`unique_tids`、`suppressed_reports` 与 `unmatched`，不生成“独立尝试数”。轨迹解析保留 worker 状态中的空格和逗号；`ambiguous_tids` 标记跨会话复用或缺少会话范围的编号，这些组不得解释为同一次传输。CLI 要求显式日志、输出 JSON 和 `--session` 单会话标识。内存关联、真实轨迹、会话复用、缺失范围及 CLI 样本测试均通过。
 
 本轮逐一执行 27 个 `tests/test_*.py`、独立模型和性能自验，共 29 个命令中 28 个通过。独立模型 30/30、性能自验 3/3、四份修改/新增 Python 文件的 `py_compile` 及 `git diff --check` 均通过。唯一失败仍是 `test_ipv6_filter.py` 的生产 TLS Relay 配置替身缺少 `ip_cal_expect_time_package_size`，与本轮诊断差异无关，未扩范围修复。逐项退出码和完整输出保存在本计划 SDD 的 `regression/`。
 
 这些测试没有复现 HTTP/2、真实远端排队、系统网络切换或生产定时行为，也没有证明共同超时已经治愈。截至本次离线验收记录，两份新诊断运行文件尚未部署或加载；后续生产观察必须按 tid 对照可见记录和系统事件，不能以短期无 WARNING 代替根因证据。
+
+fresh-context 整体审查未发现 Critical 问题，指出两项 Important：真实 `get_worker`/HTTP2 轨迹中的空格和逗号会截断旧解析；会话重启会重置 tid，可能跨会话误并。分别新增轨迹保真/最后状态和会话复用/缺失范围测试并观察 RED，修正后分析器 4/4 通过。修正后再次执行完整回归，仍为 29 个命令中 28 个通过、独立模型 30/30、性能自验 3/3，唯一失败保持为同一旧 IPv6 测试替身问题；完整证据在 `regression-final/`。审查搁置的根因疗效、既有零耗时状态省略、计划指定的 tid 路径和无法归属 tid 的 stop 尾账均未扩大解释。
