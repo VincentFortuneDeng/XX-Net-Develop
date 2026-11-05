@@ -474,6 +474,10 @@ class HttpsDispatcher(object):
             get_cost = get_time - start_time
 
             task.set_state("get_task(%d)" % get_cost)
+            if time.monotonic() >= task.deadline:
+                task.finish()
+                continue
+
             try:
                 worker = self.get_worker()
             except Exception as e:
@@ -485,6 +489,10 @@ class HttpsDispatcher(object):
                 # can send because exit.
                 self.logger.warn("http_dispatcher get None worker")
                 task.response_fail("get worker fail.")
+                continue
+
+            if time.monotonic() >= task.deadline:
+                task.finish()
                 continue
 
             get_worker_time = time.time()
@@ -556,8 +564,7 @@ class HttpsDispatcher(object):
 
     def close_all_worker(self, reason="close all worker"):
         for w in list(self.workers):
-            if w.accept_task:
-                w.close(reason)
+            w.close(reason)
 
         self.workers = []
         self.h1_num = 0

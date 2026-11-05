@@ -249,10 +249,10 @@ class PipeSocks(object):
             s2.setblocking(0)
 
         while self.running:
-            if not self.read_set and not self.write_set:
-                with self.sock_notify:
+            with self.sock_notify:
+                if not self.read_set and not self.write_set:
                     self.sock_notify.wait()
-                continue
+                    continue
 
             try:
                 # r, w, error_set = select.select(self.read_set, self.write_set, self.error_set, 0.1)

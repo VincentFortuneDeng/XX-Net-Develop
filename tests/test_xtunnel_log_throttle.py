@@ -149,6 +149,9 @@ class ThreadStub(object):
         self.started = True
         assert hasattr(self.target.__self__, "transfer_log_throttle")
 
+    def is_alive(self):
+        return False
+
 
 def load_mod(name):
     path = os.path.join(LOCAL, name + ".py")
@@ -347,7 +350,7 @@ check("X7 front retry same tid aggregates different tid independent",
       and "front retry server.example/data?tid=72" in front_log.warnings[1],
       "warnings=%r calls=%d" % (front_log.warnings, len(front_stub.calls)))
 
-# X8：网络请求期间 reset 后，旧响应必须按请求时 session 记账，不能误抑制新 session。
+# X8：网络请求期间 reset 后，旧响应必须整体丢弃，不得再修改旧 transfer 或写日志。
 reset_session = make_session(b"old-session")
 reset_session.conn_list = {}
 reset_session.get_data_lock = threading.Lock()
@@ -360,26 +363,26 @@ class ResetHttpClient(object):
         reset_session.session_id = b"new-session"
         return b"", 503, None
 g.http_client = ResetHttpClient()
-before = len(key_log.warnings)
 reset_session.session_id = b"new-session"
 reset_session.transfer_warn(b"new-session", 81, "roundtrip_status",
                             "roundtrip new transfer_no:81 status:503")
 reset_session.session_id = b"old-session"
+before = len(key_log.warnings)
 proxy.time.sleep = lambda seconds: None
 reset_session.roundtrip_task(0)
 proxy.time.sleep = original_sleep
 reset_warnings = key_log.warnings[before:]
-check("X8 delayed old response does not share new session key",
-      len(reset_warnings) == 3
-      and sum("status:503" in line for line in reset_warnings) == 2
-      and sum("roundtrip failed, no:81" in line for line in reset_warnings) == 1
-      and reset_info["stat"] == "timeout" and reset_session.wait_queue.count == 1,
+check("X8 delayed old response is discarded without touching transfer state",
+      reset_warnings == []
+      and reset_info["stat"] == "request" and reset_session.wait_queue.count == 0,
       "warnings=%r stat=%s notify=%d" %
       (reset_warnings, reset_info["stat"], reset_session.wait_queue.count))
 
 # X9：首次 stop 结算 transfer 尾账；重复 stop 不重复输出，也不逐 key 补打。
 flush_session = make_session(b"flush-session")
 class LifecycleStub(object):
+    running = False
+
     def reset(self, defer_log=False):
         return 0, 0
 

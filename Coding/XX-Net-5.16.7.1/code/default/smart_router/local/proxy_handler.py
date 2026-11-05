@@ -109,6 +109,8 @@ class ProxyServer():
                     else:
                         raise e
 
+                if not data:
+                    raise socket.error("recv fail")
                 self.read_buffer += data
         finally:
             sock.setblocking(1)
@@ -134,6 +136,8 @@ class ProxyServer():
                     else:
                         raise e
 
+                if not data:
+                    raise socket.error("recv fail")
                 self.read_buffer += data
         finally:
             sock.setblocking(1)
@@ -163,6 +167,8 @@ class ProxyServer():
                     else:
                         raise e
 
+                if not data:
+                    raise socket.error("recv fail")
                 self.read_buffer += data
         finally:
             sock.setblocking(1)

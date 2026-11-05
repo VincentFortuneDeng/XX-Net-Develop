@@ -365,7 +365,7 @@ class Stream(object):
                 self.connection.retry_task_cb(self.task, reason)
         else:
             # self.task.set_state("stream close: %s, finished" % reason)
-            self.task.finish()
+            self.task.finish(complete=reason == "end stream")
             # empty block means fail or closed.
 
         self._close_remote()

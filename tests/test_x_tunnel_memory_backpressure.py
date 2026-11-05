@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import collections
 import sys
 import threading
 import types
@@ -95,7 +96,7 @@ class MemoryBackpressureTest(unittest.TestCase):
         session.config = global_var.config
         session.session_id = b"test-session"
         session.running = True
-        session.lock = threading.Lock()
+        session.lock = threading.RLock()
         session.send_buffer = base.SendBuffer(max_payload=16)
         session.wait_queue = types.SimpleNamespace(notify=lambda: None, stop=lambda: None)
         session.wait_ack_send_list = {}
@@ -401,6 +402,347 @@ class MemoryBackpressureTest(unittest.TestCase):
             handler.socks5_handler()
 
         self.assertEqual(conn.events, [("stop", "close_on_Socks5_reply")])
+
+    def test_start_creates_live_timeout_checker(self):
+        global_var.config.enable_tls_relay = False
+        global_var.config.upload_logs = False
+        global_var.config.concurent_thread_num = 0
+        session = proxy.ProxySession()
+        session.timeout_check_th.join(1)
+        self.assertFalse(session.timeout_check_th.is_alive())
+        session.login_session = mock.Mock(return_value=True)
+
+        try:
+            self.assertTrue(session.start())
+            self.assertTrue(session.timeout_check_th.is_alive())
+        finally:
+            session.running = False
+            session.timeout_check_th.join(2)
+            session.wait_queue.stop()
+
+    def test_restart_replaces_stopped_wait_queue(self):
+        global_var.config.enable_tls_relay = False
+        global_var.config.upload_logs = False
+        global_var.config.concurent_thread_num = 0
+        session = proxy.ProxySession()
+        session.timeout_check_th.join(1)
+        session.login_session = mock.Mock(return_value=True)
+
+        self.assertTrue(session.start())
+        session.stop()
+        self.assertFalse(session.wait_queue.running)
+        try:
+            self.assertTrue(session.start())
+            self.assertTrue(session.wait_queue.running)
+        finally:
+            session.stop()
+            session.timeout_check_th.join(2)
+
+    def test_restart_replaces_alive_but_exiting_timeout_checker(self):
+        global_var.config.enable_tls_relay = False
+        global_var.config.upload_logs = False
+        global_var.config.concurent_thread_num = 0
+        session = proxy.ProxySession()
+        session.timeout_check_th.join(1)
+        old_checker = types.SimpleNamespace(
+            is_alive=lambda: True, join=lambda timeout: None)
+        session.timeout_check_th = old_checker
+        session.login_session = mock.Mock(return_value=True)
+
+        try:
+            self.assertTrue(session.start())
+            self.assertIsNot(session.timeout_check_th, old_checker)
+            self.assertTrue(session.timeout_check_th.is_alive())
+        finally:
+            session.stop()
+            session.timeout_check_th.join(2)
+
+    def test_stale_roundtrip_response_cannot_touch_new_session_transfer(self):
+        session = self.make_session()
+        session.get_data_lock = threading.Lock()
+        session.on_road_num = 0
+        session.target_on_roads = 0
+        session.traffic_upload = 0
+        session.traffic_download = 0
+        session.server_time_deviation = 0
+        session.round_trip_process = mock.Mock()
+        session.check_upload_not_acked = mock.Mock()
+        session.trigger_more = mock.Mock()
+        data_info = {
+            "transfer_no": 1,
+            "stat": "request",
+            "start_time": proxy.time.time() - 1,
+            "server_timeout": 30,
+            "send_data": base.WriteBuffer(),
+            "send_ack": base.WriteBuffer(),
+            "download_timeout": base.WriteBuffer(),
+            "request_session_id": session.session_id,
+        }
+        session.transfer_list = {1: data_info}
+        session.get_upload_data = mock.Mock(return_value=data_info)
+
+        global_var.protocol_version = 1
+        payload = struct.pack(
+            "<cBBdIIIIIIII", b"P", global_var.protocol_version, 2,
+            proxy.time.time(), 0, 0, 0, 0, 0, 0, 0, 0)
+        response = types.SimpleNamespace(
+            headers={b"Content-Length": str(len(payload)).encode()},
+            worker=types.SimpleNamespace(ip_str="test-front"))
+
+        def return_stale_response(**kwargs):
+            session.session_id = b"new-session"
+            session.transfer_list = {1: {"owner": "new-session"}}
+            return payload, 200, response
+
+        global_var.http_client = types.SimpleNamespace(request=return_stale_response)
+        global_var.server_host = "test-server"
+        global_var.stat = {"roundtrip_num": 0, "slow_roundtrip": 0}
+        global_var.quota = 100000
+        global_var.config.roundtrip_timeout = 30
+        global_var.config.network_timeout = 1
+        global_var.config.server_time_max_deviation = 10000
+        global_var.config.concurent_thread_num = 4
+        global_var.config.min_on_road = 1
+        with mock.patch.object(proxy, "encrypt_data", side_effect=lambda data: data), \
+                mock.patch.object(proxy, "decrypt_data", side_effect=lambda data: data):
+            session.roundtrip_task(0)
+
+        self.assertEqual(session.transfer_list, {1: {"owner": "new-session"}})
+        session.round_trip_process.assert_not_called()
+        self.assertEqual(session.on_road_num, 0)
+
+    def test_stale_response_after_generation_check_cannot_touch_new_session(self):
+        session = self.make_session()
+        session.get_data_lock = threading.Lock()
+        session.on_road_num = 0
+        session.target_on_roads = 0
+        session.traffic_upload = 0
+        session.traffic_download = 0
+        session.server_time_deviation = 0
+        session.round_trip_process = mock.Mock()
+        session.check_upload_not_acked = mock.Mock()
+        session.trigger_more = mock.Mock()
+        data_info = {
+            "transfer_no": 1,
+            "stat": "request",
+            "start_time": proxy.time.time() - 1,
+            "server_timeout": 30,
+            "send_data": base.WriteBuffer(),
+            "send_ack": base.WriteBuffer(),
+            "download_timeout": base.WriteBuffer(),
+            "request_session_id": session.session_id,
+        }
+        session.transfer_list = {1: data_info}
+        session.get_upload_data = mock.Mock(return_value=data_info)
+
+        global_var.protocol_version = 1
+        payload = struct.pack(
+            "<cBBdIIIIIIII", b"P", global_var.protocol_version, 2,
+            proxy.time.time(), 0, 0, 0, 0, 0, 0, 0, 0)
+        response = types.SimpleNamespace(
+            headers={b"Content-Length": str(len(payload)).encode()},
+            worker=types.SimpleNamespace(ip_str="test-front"))
+
+        class ResetAfterGenerationCheck(dict):
+            def __getitem__(self, key):
+                if key == "roundtrip_num":
+                    session.session_id = b"new-session"
+                    session.transfer_list = {1: {"owner": "new-session"}}
+                return super().__getitem__(key)
+
+        global_var.http_client = types.SimpleNamespace(
+            request=lambda **kwargs: (payload, 200, response))
+        global_var.server_host = "test-server"
+        global_var.stat = ResetAfterGenerationCheck(roundtrip_num=0, slow_roundtrip=0)
+        global_var.quota = 100000
+        global_var.config.roundtrip_timeout = 30
+        global_var.config.network_timeout = 1
+        global_var.config.server_time_max_deviation = 10000
+        global_var.config.concurent_thread_num = 4
+        global_var.config.min_on_road = 1
+        with mock.patch.object(proxy, "encrypt_data", side_effect=lambda data: data), \
+                mock.patch.object(proxy, "decrypt_data", side_effect=lambda data: data):
+            session.roundtrip_task(0)
+
+        self.assertEqual(session.transfer_list, {1: {"owner": "new-session"}})
+        session.round_trip_process.assert_not_called()
+        self.assertEqual(session.on_road_num, 0)
+
+    def test_timeout_sn_is_requested_then_retry_is_throttled(self):
+        logger = types.SimpleNamespace(warn=lambda *args: None)
+        pool = base.BlockReceivePool(lambda data: None, logger)
+        pool.mark_sn_timeout(7, t=100.0, server_time=110.0)
+
+        self.assertEqual(pool.get_timeout_list(server_time=110.0, timeout=5), [7])
+        self.assertEqual(pool.get_timeout_list(server_time=110.0, timeout=5), [])
+        self.assertEqual(pool.get_timeout_list(server_time=116.0, timeout=5), [7])
+
+    def test_wait_queue_rejects_new_waiter_after_stop(self):
+        wait_queue = base.WaitQueue()
+        wait_queue.stop()
+        returned = threading.Event()
+
+        waiter = threading.Thread(target=lambda: (wait_queue.wait(1), returned.set()))
+        waiter.start()
+        waiter.join(0.2)
+        try:
+            self.assertTrue(returned.is_set())
+            self.assertEqual(wait_queue.waiters, [])
+        finally:
+            wait_queue.notify()
+            waiter.join(1)
+
+    def test_remote_data_waits_for_protocol_start_then_flushes(self):
+        session = self.make_session()
+        conn = base.Conn.__new__(base.Conn)
+        conn.session = session
+        conn.conn_id = 1
+        conn.sock = mock.Mock()
+        conn.running = True
+        conn.read_started = False
+        conn._lock = threading.Lock()
+        conn.cmd_queue = {}
+        conn.next_cmd_seq = 1
+        conn.connection_pipe = Pipe()
+        conn.xlog = types.SimpleNamespace(debug=lambda *args: None, warn=lambda *args: None)
+
+        conn.put_cmd_data(base.ReadBuffer(struct.pack("<IB", 1, 1) + b"x"))
+
+        self.assertNotIn(("add", base.selectors.EVENT_WRITE), conn.connection_pipe.events)
+        conn.start(block=False)
+        self.assertIn(("add", base.selectors.EVENT_WRITE), conn.connection_pipe.events)
+        conn.sock.setblocking.assert_called_once_with(False)
+
+    def test_nonblocking_write_buffers_would_block_without_closing(self):
+        session = self.make_session()
+        conn = base.Conn.__new__(base.Conn)
+        conn.session = session
+        conn.conn_id = 1
+        conn.sock = mock.Mock()
+        conn.sock.send.side_effect = [2, BlockingIOError()]
+        conn.is_client = True
+        conn.blocked = False
+        conn.send_buffer = b""
+        conn.sended_position = 0
+        conn.sent_window_position = 0
+        conn.windows_ack = 100
+        conn.connection_pipe = Pipe()
+        conn.xlog = types.SimpleNamespace(debug=lambda *args: None, info=lambda *args: None)
+        conn.transfer_peer_close = mock.Mock()
+        conn.do_stop = mock.Mock()
+
+        can_continue = conn.send_to_sock(b"abcdef")
+
+        self.assertFalse(can_continue)
+        self.assertTrue(conn.blocked)
+        self.assertEqual(conn.send_buffer, b"cdef")
+        self.assertEqual(conn.sended_position, 2)
+        self.assertIn(("add", base.selectors.EVENT_WRITE), conn.connection_pipe.events)
+        conn.transfer_peer_close.assert_not_called()
+        conn.do_stop.assert_not_called()
+
+    def test_connected_target_socket_switches_to_nonblocking_io(self):
+        session = self.make_session()
+        conn = base.Conn.__new__(base.Conn)
+        conn.session = session
+        conn.xlog = types.SimpleNamespace(debug=lambda *args: None)
+        sock = mock.Mock()
+        with mock.patch.object(base.socket, "socket", return_value=sock):
+            result, ok = conn.do_connect("127.0.0.1", 443)
+
+        self.assertTrue(ok)
+        self.assertIs(result, sock)
+        sock.setblocking.assert_called_once_with(False)
+
+    def test_old_pipe_worker_cleanup_preserves_concurrently_added_conn(self):
+        cleanup_started = threading.Event()
+        allow_cleanup = threading.Event()
+        pipe = None
+
+        class RacingMap(collections.UserDict):
+            def keys(self):
+                cleanup_started.set()
+                allow_cleanup.wait(1)
+                return super().keys()
+
+        class FakeSelector:
+            def register_event(self, sock, event, conn):
+                pass
+
+            def unregister_event(self, sock, event):
+                return True
+
+            def unregister(self, sock):
+                pass
+
+            def select(self, timeout):
+                return []
+
+        session = types.SimpleNamespace(
+            config=types.SimpleNamespace(show_debug=False),
+            session_id=b"test", check_upload=lambda: False)
+        logger = types.SimpleNamespace(
+            debug=lambda *args: None, warn=lambda *args: None,
+            exception=lambda *args: None)
+        pipe = base.ConnectionPipe(session, logger)
+        pipe.select2 = FakeSelector()
+        pipe.sock_conn_map = RacingMap()
+        new_sock = object()
+        new_conn = types.SimpleNamespace(conn_id=2)
+        old_worker = threading.Thread(target=pipe.pipe_worker)
+        pipe.th = old_worker
+        old_worker.start()
+        self.assertTrue(cleanup_started.wait(1))
+
+        add_done = threading.Event()
+        adder = threading.Thread(
+            target=lambda: (pipe.add_sock_event(
+                new_sock, new_conn, base.selectors.EVENT_READ), add_done.set()))
+        adder.start()
+        add_done.wait(0.1)
+        allow_cleanup.set()
+        old_worker.join(1)
+        adder.join(1)
+
+        try:
+            self.assertFalse(old_worker.is_alive())
+            self.assertFalse(adder.is_alive())
+            self.assertIs(pipe.sock_conn_map.get(new_sock), new_conn)
+        finally:
+            pipe.running = False
+            if pipe.th is not None:
+                pipe.th.join(2)
+
+    def test_stopped_session_rejects_frame_waiting_for_send_lock(self):
+        session = self.make_session()
+        inner_lock = threading.Lock()
+        lock_entered = threading.Event()
+
+        class GateLock:
+            def __enter__(self):
+                lock_entered.set()
+                inner_lock.acquire()
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                inner_lock.release()
+
+        session.lock = GateLock()
+        session.update_backpressure = mock.Mock()
+        inner_lock.acquire()
+        sender = threading.Thread(target=session.send_conn_data, args=(1, b"late-frame"))
+        sender.start()
+        self.assertTrue(lock_entered.wait(1))
+
+        session.running = False
+        session.send_buffer.reset()
+        inner_lock.release()
+        sender.join(1)
+
+        self.assertFalse(sender.is_alive())
+        self.assertEqual(session.send_buffer.pool_size, 0)
+        self.assertEqual(session.buffered_bytes, 0)
+        session.update_backpressure.assert_not_called()
 
     def test_permanent_ack_stall_eventually_resets_session(self):
         session = self.make_session()

@@ -173,22 +173,23 @@ class DomainRecords(object):
             self._set(domain, record)
 
     def get_ips(self, domain, dns_type=None):
-        if domain not in self.cache:
-            return []
+        with self.lock:
+            if domain not in self.cache:
+                return []
 
-        record = self._get(domain)
-        if not dns_type:
-            dns_types = [1, 28]
-        else:
-            dns_types = [dns_type]
+            record = self._get(domain)
+            if not dns_type:
+                dns_types = [1, 28]
+            else:
+                dns_types = [dns_type]
 
-        ips = []
-        for dns_type in dns_types:
-            if dns_type not in record["dns"]:
-                continue
-            ips += record["dns"][dns_type]
+            ips = []
+            for dns_type in dns_types:
+                if dns_type not in record["dns"]:
+                    continue
+                ips += record["dns"][dns_type]
 
-        return ips
+            return ips
 
     def update_rule(self, domain, rule):
         record = self._get(domain)

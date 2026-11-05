@@ -89,6 +89,8 @@ class Socks5Server():
                     else:
                         raise e
 
+                if not data:
+                    raise socket.error("recv fail")
                 self.read_buffer += data
         finally:
             sock.setblocking(1)
@@ -114,6 +116,8 @@ class Socks5Server():
                     else:
                         raise e
 
+                if not data:
+                    raise socket.error("recv fail")
                 self.read_buffer += data
         finally:
             sock.setblocking(1)
@@ -143,6 +147,8 @@ class Socks5Server():
                     else:
                         raise e
 
+                if not data:
+                    raise socket.error("recv fail")
                 self.read_buffer += data
         finally:
             sock.setblocking(1)

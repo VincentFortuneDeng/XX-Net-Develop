@@ -232,7 +232,15 @@ def request(method, host, path="/", headers={}, data="", timeout=100):
             xlog.warn("response length incorrect, head len:%s, content len:%d retry it", header_len, len(content))
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                break
+                return "", 603, {}
+            time.sleep(min(1, remaining))
+            continue
+
+        if status == 200 and not getattr(getattr(response, "task", None), "response_complete", True):
+            xlog.warn("response incomplete, content len:%d retry it", len(content))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return "", 603, {}
             time.sleep(min(1, remaining))
             continue
 

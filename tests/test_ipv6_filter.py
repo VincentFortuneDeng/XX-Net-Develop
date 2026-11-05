@@ -104,6 +104,7 @@ def main():
     # max_links 设大，避免多次调用把 v4 条目 links 打满而提前 return None
     cfg = types.SimpleNamespace(max_links_per_ip=10, ip_initial_score=100,
                                 ip_initial_rtt=1000, ip_initial_speed=1,
+                                ip_cal_expect_time_package_size=1000,
                                 use_ipv6="auto")
     hm = types.SimpleNamespace(info={
         "198.18.0.9": {"sni": "a", "port": 443},
@@ -150,6 +151,7 @@ def main():
     def make_seley(use_ipv6):
         c = types.SimpleNamespace(max_links_per_ip=2, ip_initial_score=100,
                                   ip_initial_rtt=1000, ip_initial_speed=1,
+                                  ip_cal_expect_time_package_size=1000,
                                   use_ipv6=use_ipv6)
         return seley.IpManager(c, seley_rec, cfg_fn, None)
 

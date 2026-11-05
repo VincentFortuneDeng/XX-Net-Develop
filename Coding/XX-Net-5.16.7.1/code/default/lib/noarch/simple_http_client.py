@@ -390,6 +390,13 @@ class Client(object):
         else:
             self.proxy = None
 
+    def close(self):
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            finally:
+                self.sock = None
+
     @staticmethod
     def direct_connect(host, port):
         connect_timeout = 30

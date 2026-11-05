@@ -78,9 +78,23 @@ class Front:
 
     def request(self, method, host, path, headers, data, timeout):
         self.timeouts.append(timeout)
-        cost, status = self.results.pop(0)
+        result = self.results.pop(0)
+        if isinstance(result, dict):
+            cost = result.get("cost", 0)
+            status = result.get("status", 200)
+            complete = result.get("complete", True)
+            content = result.get("content", "content")
+            response_headers = result.get("headers", {})
+        else:
+            cost, status = result[:2]
+            complete = result[2] if len(result) > 2 else True
+            content = "content"
+            response_headers = {}
         self.clock.sleep(min(cost, timeout))
-        return "content", status, types.SimpleNamespace(headers={})
+        response = types.SimpleNamespace(
+            headers=response_headers,
+            task=types.SimpleNamespace(response_complete=complete))
+        return content, status, response
 
 
 class FrontRequestDeadlineTest(unittest.TestCase):
@@ -153,6 +167,34 @@ class FrontRequestDeadlineTest(unittest.TestCase):
                 )
                 self.assertEqual(result[1], status)
                 self.assertEqual(len(request_timeouts), 1)
+
+    def test_incomplete_200_is_retried_until_a_complete_response_arrives(self):
+        result, elapsed, select_timeouts, request_timeouts = self.run_request(
+            0.2, [(0.01, 200, False), (0.01, 200, True)], sleep_cost=0.01,
+        )
+
+        self.assertEqual(result[1], 200)
+        self.assertEqual(result[0], "content")
+        self.assertEqual(len(request_timeouts), 2)
+
+    def test_incomplete_200_at_deadline_returns_internal_failure(self):
+        result, elapsed, select_timeouts, request_timeouts = self.run_request(
+            0.05, [{"cost": 0.05, "status": 200, "complete": False}],
+        )
+
+        self.assertEqual(result, ("", 603, {}))
+        self.assertLessEqual(elapsed, 0.050001)
+        self.assertEqual(len(request_timeouts), 1)
+
+    def test_length_mismatch_at_deadline_returns_internal_failure(self):
+        result, elapsed, select_timeouts, request_timeouts = self.run_request(
+            0.05, [{"cost": 0.05, "status": 200, "content": "abc",
+                    "headers": {b"Content-Length": b"10"}}],
+        )
+
+        self.assertEqual(result, ("", 603, {}))
+        self.assertLessEqual(elapsed, 0.050001)
+        self.assertEqual(len(request_timeouts), 1)
 
 
 if __name__ == "__main__":

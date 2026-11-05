@@ -244,7 +244,7 @@ class LocalDnsQuery():
             try:
                 try:
                     response, server = sock.recvfrom(8192)
-                    server, port = server
+                    server, port = server[:2]
                 except Exception as e:
                     # xlog.exception("sock.recvfrom except:%r", e)
                     continue
@@ -368,7 +368,7 @@ class LocalDnsQuery():
             self.send_request(id, server_ip, domain, dns_type)
 
         try:
-            ips = que.get(timeout=self.timeout)
+            ips = que.get(timeout=timeout)
         except:
             ips = []
 
@@ -491,6 +491,8 @@ class DnsOverTcpQuery():
 
     def query(self, domain, dns_type=1):
         t0 = time.time()
+        sock = None
+        return_connection = False
         try:
             sock = self.get_connection()
             if not sock:
@@ -504,17 +506,23 @@ class DnsOverTcpQuery():
             data = struct.pack("!H", len(data)) + data
             sock.sendall(data)
 
-            response = sock.recv(8192)
-            if not response:
-                return []
+            response = b""
+            while len(response) < 2:
+                chunk = sock.recv(2 - len(response))
+                if not chunk:
+                    return []
+                response += chunk
 
-            length = struct.unpack("!H", bytes(response[:2]))[0]
+            length = struct.unpack("!H", response[:2])[0]
             while len(response) - 2 < length:
-                response += sock.recv(8192)
+                chunk = sock.recv(length + 2 - len(response))
+                if not chunk:
+                    return []
+                response += chunk
 
             t2 = time.time()
 
-            p = DNSRecord.parse(response[2:])
+            p = DNSRecord.parse(response[2:length + 2])
             if len(p.rr) == 0:
                 xlog.warn("query_over_tcp for %s type:%d return none, cost:%f", domain, dns_type, t2-t0)
 
@@ -531,6 +539,7 @@ class DnsOverTcpQuery():
                     ips.append(ip)
 
             xlog.debug("DNS %s %s return %s t:%f", self.protocol, domain, ips, t2-t0)
+            return_connection = True
             self.connections.append([sock, time.time()])
             return ips
         except socket.timeout:
@@ -539,6 +548,12 @@ class DnsOverTcpQuery():
         except Exception as e:
             xlog.exception("query_over_tcp %s type:%s except:%r", domain, dns_type, e)
             return []
+        finally:
+            if sock is not None and not return_connection:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
 
 
 class DnsOverTlsQuery(DnsOverTcpQuery):
@@ -624,6 +639,8 @@ class DnsOverHttpsQuery(object):
         return random.choice(self.other_servers)
 
     def query_json(self, domain, dns_type=1):
+        client = None
+        return_connection = False
         try:
             t0 = time.time()
             client = self.get_connection()
@@ -642,6 +659,7 @@ class DnsOverHttpsQuery(object):
             for answer in data["Answer"]:
                 ips.append(answer["data"])
 
+            return_connection = True
             self.connections.append([client, time.time()])
 
             xlog.debug("DNS server:%s query:%s return %s t:%f", self.server, domain, ips, t2 - t0)
@@ -649,9 +667,17 @@ class DnsOverHttpsQuery(object):
         except Exception as e:
             xlog.warn("DNSOverHttpsQuery query fail:%r", e)
             return []
+        finally:
+            if client is not None and not return_connection:
+                try:
+                    client.close()
+                except Exception:
+                    pass
 
     def query(self, domain, dns_type=1, url=None):
         t0 = time.time()
+        client = None
+        return_connection = False
         try:
             client = self.get_connection()
 
@@ -674,6 +700,7 @@ class DnsOverHttpsQuery(object):
 
             p = DNSRecord.parse(r.text)
 
+            return_connection = True
             self.connections.append([client, time.time()])
 
             for r in p.rr:
@@ -694,6 +721,12 @@ class DnsOverHttpsQuery(object):
             t = t1 - t0
             xlog.warn("DnsOverHttpsQuery query %s cost:%f fail:%r", domain, t, e)
             return []
+        finally:
+            if client is not None and not return_connection:
+                try:
+                    client.close()
+                except Exception:
+                    pass
 
 
 class ParallelQuery():
@@ -800,7 +833,7 @@ class CombineDnsQuery():
             return ips
 
         elif b"." not in domain or g.gfwlist.in_white_list(domain) or rule in ["direct"] or g.config.pac_policy == "all_Direct":
-            ips = self.local_dns_resolve.query(domain, timeout=1)
+            ips = self.local_dns_resolve.query(domain, dns_type, timeout=1)
             g.domain_cache.set_ips(domain, ips, dns_type)
             return ips
 
@@ -812,7 +845,7 @@ class CombineDnsQuery():
             ips = self.query_unknown_domain(domain, dns_type)
 
         if not ips:
-            ips = self.local_dns_resolve.query(domain, timeout=1)
+            ips = self.local_dns_resolve.query(domain, dns_type, timeout=1)
 
         out_ips = []
         for ip in ips:

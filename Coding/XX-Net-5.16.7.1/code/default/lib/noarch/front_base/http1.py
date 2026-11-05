@@ -186,8 +186,6 @@ class Http1Worker(HttpWorker):
 
         task.set_state("h1_get_head")
 
-        time_left = timeout - (time.time() - start_time)
-
         if task.method == b"HEAD" or response.status in [204, 304]:
             response.content_length = 0
 
@@ -209,6 +207,7 @@ class Http1Worker(HttpWorker):
 
         data_len = 0
         while True:
+            time_left = max(0, task.deadline - time.monotonic())
             try:
                 data = response.read(timeout=time_left)
                 if not data:
@@ -231,8 +230,9 @@ class Http1Worker(HttpWorker):
                              self.ip_str, response.chunked, task.url, task.timeout)
             self.ip_manager.recheck_ip(self.ssl_sock.ip_str)
             self.close("down fail")
+            return
 
-        task.finish()
+        task.finish(complete=True)
 
         self.ssl_sock.received_size += data_len
 
