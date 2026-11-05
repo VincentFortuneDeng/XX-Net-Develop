@@ -207,16 +207,20 @@ def request(method, host, path="/", headers={}, data="", timeout=100):
             padding = utils.to_str(utils.generate_random_lowercase(random.randint(8, 64)))
             headers["Padding"] = padding
 
+        front_request_start = time.monotonic()
         content, status, response = front.request(
             method, host=host, path=path, headers=dict(headers), data=data, timeout=remaining)
+        front_request_time = time.monotonic() - front_request_start
 
         if status not in [200, 521, 400, 404]:
             allowed, suppressed = front_retry_log_throttle.allow((host, path))
             if allowed:
                 if suppressed:
-                    xlog.warn("front retry %s%s (suppressed %d)", host, path, suppressed)
+                    xlog.warn("front retry %s%s front:%s status:%s select:%f request:%f (suppressed %d)",
+                              host, path, front.name, status, get_front_time, front_request_time, suppressed)
                 else:
-                    xlog.warn("front retry %s%s", host, path)
+                    xlog.warn("front retry %s%s front:%s status:%s select:%f request:%f",
+                              host, path, front.name, status, get_front_time, front_request_time)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break

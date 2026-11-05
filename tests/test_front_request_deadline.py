@@ -34,8 +34,11 @@ namespace("env_info", data_path=tempfile.gettempdir())
 
 
 class Logger:
-    def warn(self, *args):
-        pass
+    def __init__(self):
+        self.warnings = []
+
+    def warn(self, fmt, *args):
+        self.warnings.append(fmt % args if args else fmt)
 
 
 class Throttle:
@@ -66,6 +69,8 @@ class Clock:
 
 
 class Front:
+    name = "seley_front"
+
     def __init__(self, clock, results):
         self.clock = clock
         self.results = list(results)
@@ -116,6 +121,22 @@ class FrontRequestDeadlineTest(unittest.TestCase):
         self.assertEqual(result[1], 200)
         self.assertLessEqual(elapsed, 0.100001)
         self.assertTrue(all(value <= 0.1 for value in select_timeouts + request_timeouts))
+
+    def test_failed_attempt_log_records_front_status_and_costs(self):
+        front_module.xlog.warnings.clear()
+        result, elapsed, select_timeouts, request_timeouts = self.run_request(
+            0.2, [(0.02, 503), (0.01, 200)], select_cost=0.01, sleep_cost=0.02,
+        )
+        warnings = front_module.xlog.warnings
+
+        self.assertEqual(result[1], 200)
+        self.assertLessEqual(elapsed, 0.200001)
+        self.assertEqual(len(warnings), 1)
+        self.assertRegex(
+            warnings[0],
+            r"front retry example\.com/ front:seley_front status:503 "
+            r"select:\d+\.\d+ request:\d+\.\d+$",
+        )
 
     def test_zero_timeout_starts_no_suboperation(self):
         with mock.patch.object(front_module, "get_front") as get_front:

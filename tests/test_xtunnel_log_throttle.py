@@ -317,6 +317,8 @@ check("X6 status and final failed aggregate without behavior changes",
 
 # X7：front retry 同 tid 聚合、不同 tid 独立；两次请求及最终响应不变。
 class FrontStub(object):
+    name = "seley_front"
+
     def __init__(self):
         self.calls = []
 
