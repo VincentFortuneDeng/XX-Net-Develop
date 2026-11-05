@@ -34,6 +34,7 @@ namespace("gae_proxy", APP / "gae_proxy")
 namespace("gae_proxy.local", APP / "gae_proxy" / "local")
 namespace("gae_proxy.local.check_local_network", IPv6=types.SimpleNamespace(is_ok=lambda: False))
 namespace("x_tunnel.local.upload_logs", upload_logs_thread=lambda: None)
+namespace("x_tunnel.local.openai_handler")
 
 
 def load_module(name, path):
@@ -46,6 +47,7 @@ def load_module(name, path):
 
 base = load_module("x_tunnel.local.base_container", APP / "x_tunnel" / "local" / "base_container.py")
 proxy = load_module("x_tunnel.local.proxy_session", APP / "x_tunnel" / "local" / "proxy_session.py")
+proxy_handler = load_module("x_tunnel.local.proxy_handler", APP / "x_tunnel" / "local" / "proxy_handler.py")
 
 
 class Pipe:
@@ -78,6 +80,9 @@ class RecordingConn:
 
     def start(self, block):
         self.events.append(("start", block))
+
+    def do_stop(self, reason):
+        self.events.append(("stop", reason))
 
 
 class MemoryBackpressureTest(unittest.TestCase):
@@ -232,6 +237,36 @@ class MemoryBackpressureTest(unittest.TestCase):
 
         self.assertTrue(started)
         self.assertEqual(conn.events, [("start", True)])
+
+    def test_socks5_reply_failure_tolerates_concurrent_conn_removal(self):
+        session = self.make_session()
+        conn = RecordingConn()
+
+        class RemoveAfterContains(dict):
+            def __contains__(self, conn_id):
+                existed = super().__contains__(conn_id)
+                if existed:
+                    self.pop(conn_id)
+                return existed
+
+        session.conn_list = RemoveAfterContains({1: conn})
+        global_var.session = session
+        handler = proxy_handler.Socks5Server.__new__(proxy_handler.Socks5Server)
+        handler.connection = mock.Mock()
+        handler.connection.send.side_effect = [None, OSError("reply failed")]
+        handler.client_address = ("127.0.0.1", 12345)
+        handler.read_bytes = mock.Mock(side_effect=[
+            b"\x01",
+            b"\x00",
+            b"\x05\x01\x00\x01",
+            b"\x7f\x00\x00\x01",
+        ])
+        handler.rfile = types.SimpleNamespace(read=lambda size: b"\x00\x50")
+
+        with mock.patch.object(proxy, "create_conn", return_value=1):
+            handler.socks5_handler()
+
+        self.assertEqual(conn.events, [("stop", "close_on_Socks5_reply")])
 
     def test_permanent_ack_stall_eventually_resets_session(self):
         session = self.make_session()

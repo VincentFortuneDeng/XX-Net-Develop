@@ -276,8 +276,10 @@ class Socks5Server():
         try:
             sock.send(reply)
         except Exception as e:
-            if conn_id in g.session.conn_list:
-                g.session.conn_list[conn_id].do_stop("close_on_Socks5_reply")
+            with g.session.lock:
+                conn = g.session.conn_list.get(conn_id)
+                if conn is not None:
+                    conn.do_stop("close_on_Socks5_reply")
             xlog.warn("socks5 %r connect to %s:%d conn_id:%d closed:%r", self.client_address, addr, port, conn_id, e)
             return
 
