@@ -99,11 +99,20 @@ class BoundedWriterTest(unittest.TestCase):
             release = threading.Event()
             logger.persistent_fd.close()
             logger.persistent_fd = SlowFile(started, release)
+            reset_entered = threading.Event()
+            original_flush = logger.flush_persistent_writes
+
+            def mark_reset_entered():
+                reset_entered.set()
+                original_flush()
+
+            logger.flush_persistent_writes = mark_reset_entered
             first = threading.Thread(target=logger.warn, args=("first",))
             first.start()
             self.assertTrue(started.wait(1))
             reset = threading.Thread(target=logger.reset_log_files)
             reset.start()
+            self.assertTrue(reset_entered.wait(1))
             second = threading.Thread(target=logger.warn, args=("second",))
             second.start()
             second.join(0.05)
