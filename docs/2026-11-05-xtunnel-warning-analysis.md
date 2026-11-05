@@ -146,3 +146,9 @@ fresh-context 整体审查未发现 Critical 问题，指出两项 Important：�
 后续真实 `upload_logs` 重试样本提示路径可能带 `session_id`。为避免新 dispatcher `unique_id` 和分析器 unmatched 副本扩大该既有字段的暴露，分别加入脱敏测试并观察 RED；实现仅将查询参数值替换为 `[redacted]`，保留 tid、front、状态和轨迹，且分析器不修改输入记录。派生分析 JSON 已原地脱敏，旧日志与备份未删除或改写。
 
 脱敏回归还暴露 `test_xlog_bounded_writer.py` 的既有时序缺口：测试未等待 reset 线程真正持有 `buffer_lock`，第二个写入可能先完成。提交 `d52f542` 只增加 reset 进入受锁 flush 的事件同步，不改 xlog 生产实现；该测试随后连续 20/20 通过。
+
+## 脱敏版重启与验收
+
+旧 PID 977 接收正常 SIGTERM 后退出，项目启动脚本于 17:58:37 启动新 PID 2770，8085/8086 均正常监听。生产 dispatcher 与开发快照 SHA256 均为 `7ab8c3d710cca2bf115b56428c71a40d5c6ba0d165aa1716023d2e203fe3714a`，front dispatcher 也保持逐字节一致；结合新进程启动时间，可确认本轮验收使用的是脱敏版文件。
+
+正式黑盒 **10/10 PASS**，包括 29 个累计部署文件来源、配置接口、禁用模块零请求、两组各 24 路并发 `/debug`、全部启用模块日志视图及生产代理 `generate_204=204`。完整输出保存在 SDD 的 `privacy-deploy-final/blackbox.log`。本轮没有新 WARNING 的即时结果只覆盖该验收时点，不能证明间歇性 front 超时已消失；仍需保留后续按 tid 对照新格式证据的能力。
