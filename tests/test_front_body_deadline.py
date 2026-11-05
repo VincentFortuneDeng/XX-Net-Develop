@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import queue
 import sys
+import threading
 import types
 import unittest
 from unittest import mock
@@ -78,6 +79,66 @@ class FrontBodyDeadlineTest(unittest.TestCase):
 
         self.assertIsNone(result)
         sleep.assert_called_once_with(0.2)
+
+    def test_timeout_log_preserves_xtunnel_path_and_trace(self):
+        class CaptureLogger:
+            def __init__(self):
+                self.warnings = []
+
+            def warn(self, fmt, *args):
+                self.warnings.append(fmt % args if args else fmt)
+
+            def debug(self, *args):
+                pass
+
+        logger = CaptureLogger()
+        dispatcher = http_dispatcher.HttpsDispatcher.__new__(http_dispatcher.HttpsDispatcher)
+        dispatcher.task_count = 0
+        dispatcher.task_count_lock = threading.Lock()
+        dispatcher.config = types.SimpleNamespace(max_task_num=10, show_state_debug=False)
+        dispatcher.logger = logger
+        dispatcher.request_queue = queue.Queue()
+        dispatcher.retry_log_throttle = types.SimpleNamespace(allow=lambda key: (True, 0))
+        dispatcher.trigger_create_worker_cv = types.SimpleNamespace(notify=lambda: None)
+        dispatcher.fail_num = 0
+        dispatcher.continue_fail_num = 0
+
+        created_tasks = []
+        real_task = http_dispatcher.http_common.Task
+
+        def capture_task(*args):
+            task = real_task(*args)
+            created_tasks.append(task)
+            return task
+
+        class TimeoutQueue:
+            def get(self, timeout):
+                created_tasks[0].set_state("h1_req_sent")
+                raise queue.Empty()
+
+        now = 0.0
+
+        def next_time():
+            nonlocal now
+            now += 0.001
+            return now
+
+        with mock.patch.object(http_dispatcher.http_common, "Task", side_effect=capture_task), \
+                mock.patch.object(http_dispatcher, "Queue", TimeoutQueue), \
+                mock.patch.object(http_common.time, "time", side_effect=next_time):
+            result = dispatcher.request(
+                "POST", "ny3.xx-net.org", b"/",
+                {b"X-Path": b"/data?tid=634", b"X-Test": b"test-sensitive-marker"},
+                b"payload", timeout=1,
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(len(logger.warnings), 1)
+        warning = logger.warnings[0]
+        self.assertIn("/data?tid=634", warning)
+        self.assertIn("h1_req_sent", warning)
+        self.assertIn("get_response", warning)
+        self.assertNotIn("test-sensitive-marker", warning)
 
     def test_direct_front_does_not_replace_budget_or_sleep_past_it(self):
         client = types.ModuleType("direct_front_http_client")

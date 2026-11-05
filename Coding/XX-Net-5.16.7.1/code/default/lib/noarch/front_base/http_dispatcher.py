@@ -383,6 +383,7 @@ class HttpsDispatcher(object):
             except:
                 response = None
 
+            task.set_state("get_response")
             if response and response.status == 200:
                 self.success_num += 1
                 self.continue_fail_num = 0
@@ -392,7 +393,7 @@ class HttpsDispatcher(object):
                 if allowed:
                     suffix = " (suppressed %d)" % suppressed if suppressed else ""
                     if not response:
-                        self.logger.warn("task %s %s %s timeout%s", method, host, path, suffix)
+                        self.logger.warn("task %s timeout trace:%s%s", task.unique_id, task.get_trace(), suffix)
                     else:
                         self.logger.warn("task %s %s %s status:%d%s", method, host, path, response.status, suffix)
 
@@ -406,7 +407,6 @@ class HttpsDispatcher(object):
                 else:
                     self.trigger_create_worker_cv.notify()
 
-            task.set_state("get_response")
             return response
         except Exception as e:
             self.logger.exception("http_dispatcher:request:%r", e)
