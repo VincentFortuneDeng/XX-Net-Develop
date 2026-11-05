@@ -1,0 +1,16 @@
+--- production/code/default/lib/noarch/simple_http_client.py
++++ source/code/default/lib/noarch/simple_http_client.py
+@@ -390,6 +390,13 @@
+         else:
+             self.proxy = None
+ 
++    def close(self):
++        if self.sock is not None:
++            try:
++                self.sock.close()
++            finally:
++                self.sock = None
++
+     @staticmethod
+     def direct_connect(host, port):
+         connect_timeout = 30

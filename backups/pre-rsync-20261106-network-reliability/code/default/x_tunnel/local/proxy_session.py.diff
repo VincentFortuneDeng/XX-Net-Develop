@@ -1,0 +1,67 @@
+--- production/code/default/x_tunnel/local/proxy_session.py
++++ source/code/default/x_tunnel/local/proxy_session.py
+@@ -157,6 +157,11 @@
+                 return False
+ 
+             self.running = True
++            if not self.wait_queue.running:
++                self.wait_queue = base_container.WaitQueue()
++            self.timeout_check_th = threading.Thread(
++                target=self.timeout_checker, name="timeout_check")
++            self.timeout_check_th.start()
+ 
+             for i in range(0, g.config.concurent_thread_num):
+                 if i in self.round_trip_thread:
+@@ -189,7 +194,8 @@
+             self.reset()
+ 
+     def timeout_checker(self):
+-        while self.running:
++        checker = threading.current_thread()
++        while self.running and self.timeout_check_th is checker:
+             self.check_backpressure_timeout()
+             timeout_num = 0
+             with self.lock:
+@@ -622,6 +628,8 @@
+         buf.append(struct.pack("<II", conn_id, len(data)))
+         buf.append(data)
+         with self.lock:
++            if not self.running:
++                return
+             self.send_buffer.put(buf)
+             self.buffered_bytes += len(buf)
+ 
+@@ -1043,6 +1051,9 @@
+             finally:
+                 with self.lock:
+                     self.on_road_num -= 1
++
++            if request_session_id != self.session_id:
++                return
+ 
+             g.stat["roundtrip_num"] += 1
+             time_now = time.time()
+@@ -1177,14 +1188,16 @@
+                         data_info["stat"] = "timeout"
+                         continue
+ 
+-                self.last_receive_time = time.time()
+-
+                 with self.lock:
+-                    if transfer_no in self.transfer_list:
+-                        del self.transfer_list[transfer_no]
+-
+-                self.round_trip_process(data, ack, rcvd_no_list, sent_no_list, unack_snd_sn, server_time)
+-                self.check_upload_not_acked(server_time)
++                    if request_session_id != self.session_id:
++                        return
++                    if self.transfer_list.get(transfer_no) is not data_info:
++                        return
++
++                    del self.transfer_list[transfer_no]
++                    self.last_receive_time = time.time()
++                    self.round_trip_process(data, ack, rcvd_no_list, sent_no_list, unack_snd_sn, server_time)
++                    self.check_upload_not_acked(server_time)
+ 
+                 if self.on_road_num + 1 < self.target_on_roads:
+                     self.wait_queue.notify()

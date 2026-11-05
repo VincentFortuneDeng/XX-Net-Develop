@@ -60,7 +60,8 @@ for deployed_manifest in (
         ROOT / 'backups/pre-rsync-20261103-control-handler-response/DEPLOYED-SHA256SUMS',
         ROOT / 'backups/pre-rsync-20261105-xtunnel-conn-start-race/DEPLOYED-SHA256SUMS',
         ROOT / 'backups/pre-rsync-20261105-xtunnel-front-diagnostics/DEPLOYED-SHA256SUMS',
-        ROOT / 'backups/pre-rsync-20261105-conn-lifecycle-dns-delivery/DEPLOYED-SHA256SUMS'):
+        ROOT / 'backups/pre-rsync-20261105-conn-lifecycle-dns-delivery/DEPLOYED-SHA256SUMS',
+        ROOT / 'backups/pre-rsync-20261106-network-reliability/DEPLOYED-SHA256SUMS'):
     for line in deployed_manifest.read_text().splitlines():
         digest, relative = line.split('  ', 1)
         expected_deployed[relative] = digest

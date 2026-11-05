@@ -1,0 +1,109 @@
+--- production/code/default/x_tunnel/local/base_container.py
++++ source/code/default/x_tunnel/local/base_container.py
+@@ -151,11 +151,13 @@
+         self.running = True
+ 
+     def stop(self):
+-        self.running = False
++        with self.lock:
++            self.running = False
++            waiters = self.waiters
++            self.waiters = []
+         xlog.info("WaitQueue stop")
+-        for end_time, lock in self.waiters:
++        for end_time, lock in waiters:
+             lock.release()
+-        self.waiters = []
+         xlog.info("WaitQueue stop finished")
+ 
+     def notify(self):
+@@ -172,6 +174,9 @@
+ 
+     def wait(self, wait_order):
+         with self.lock:
++            if not self.running:
++                return
++
+             lock = threading.Lock()
+             lock.acquire()
+ 
+@@ -368,7 +373,7 @@
+                 if server_time - info["server_send_time"] < timeout:
+                     continue
+ 
+-                if server_time - info.get("retry_time", server_time) < timeout:
++                if server_time - info.get("retry_time", 0) < timeout:
+                     continue
+ 
+                 self.logger.warn("get_timeout_list sn:%d sent:%f retry:%f", sn, server_time - info["server_send_time"],
+@@ -585,14 +590,20 @@
+             except Exception as e:
+                 xlog.exception("recv_worker e:%r", e)
+ 
+-        for sock in dict(self.sock_conn_map):
+-            try:
+-                self.select2.unregister(sock)
+-            except Exception as e:
+-                xlog.warn("unregister %s e:%r", sock, e)
+-        self.sock_conn_map = {}
++        with self._lock:
++            if self.running and self.sock_conn_map:
++                self.th = threading.Thread(target=self.pipe_worker, name="x_tunnel_pipe_worker")
++                self.th.start()
++                return
++
++            for sock in dict(self.sock_conn_map):
++                try:
++                    self.select2.unregister(sock)
++                except Exception as e:
++                    xlog.warn("unregister %s e:%r", sock, e)
++            self.sock_conn_map = {}
++            self.th = None
+         self._debug_log("ConnectionPipe stop")
+-        self.th = None
+         self.session.check_upload()
+ 
+ 
+@@ -635,7 +646,12 @@
+         self.next_recv_seq = 1
+ 
+     def start(self, block):
+-        self.read_started = True
++        self.sock.setblocking(False)
++        with self._lock:
++            self.read_started = True
++            if self.sock and self.cmd_queue:
++                self.connection_pipe.add_sock_event(self.sock, self, selectors.EVENT_WRITE)
++
+         if self.sock and not self.session.read_paused:
+             self.connection_pipe.add_sock_event(self.sock, self, selectors.EVENT_READ)
+ 
+@@ -711,6 +727,7 @@
+             sock.settimeout(connect_timeout)
+ 
+             sock.connect((ip, port))
++            sock.setblocking(False)
+ 
+             # record TCP connection time
+             # conn_time = time.time() - start_time
+@@ -740,9 +757,9 @@
+         with self._lock:
+             self.cmd_queue[seq] = data.get_buf()
+             if seq == self.next_cmd_seq:
+-                if self.sock:
++                if self.sock and self.read_started:
+                     self.connection_pipe.add_sock_event(self.sock, self, selectors.EVENT_WRITE)
+-                else:
++                elif not self.sock:
+                     self.process_cmd()
+ 
+     def get_cmd_data(self):
+@@ -844,6 +861,8 @@
+             send_size = min(end - start, 65535)
+             try:
+                 sended = sock.send(data[start:start + send_size])
++            except BlockingIOError:
++                sended = 0
+             except Exception as e:
+                 self.xlog.info("%s conn:%d send closed: %r", self.session.session_id, self.conn_id, e)
+                 if self.is_client:

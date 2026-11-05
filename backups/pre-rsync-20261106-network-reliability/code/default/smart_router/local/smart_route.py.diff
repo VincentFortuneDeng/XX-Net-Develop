@@ -1,0 +1,11 @@
+--- production/code/default/smart_router/local/smart_route.py
++++ source/code/default/smart_router/local/smart_route.py
+@@ -380,7 +380,7 @@
+ 
+             elif rule == "direct":
+                 if is_ipv6_ok():
+-                    query_type = 6
++                    query_type = 28
+                 else:
+                     query_type = 1
+                 ips = g.dns_query.query(host, query_type)

@@ -1,0 +1,29 @@
+--- production/code/default/smart_router/local/proxy_handler.py
++++ source/code/default/smart_router/local/proxy_handler.py
+@@ -109,6 +109,8 @@
+                     else:
+                         raise e
+ 
++                if not data:
++                    raise socket.error("recv fail")
+                 self.read_buffer += data
+         finally:
+             sock.setblocking(1)
+@@ -134,6 +136,8 @@
+                     else:
+                         raise e
+ 
++                if not data:
++                    raise socket.error("recv fail")
+                 self.read_buffer += data
+         finally:
+             sock.setblocking(1)
+@@ -163,6 +167,8 @@
+                     else:
+                         raise e
+ 
++                if not data:
++                    raise socket.error("recv fail")
+                 self.read_buffer += data
+         finally:
+             sock.setblocking(1)

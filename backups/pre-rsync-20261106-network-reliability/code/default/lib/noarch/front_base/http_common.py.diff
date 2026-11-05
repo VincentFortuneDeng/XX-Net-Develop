@@ -1,0 +1,32 @@
+--- production/code/default/lib/noarch/front_base/http_common.py
++++ source/code/default/lib/noarch/front_base/http_common.py
+@@ -36,6 +36,7 @@
+ 
+         self.responsed = False
+         self.finished = False
++        self.response_complete = False
+         self.retry_count = 0
+ 
+     def to_string(self):
+@@ -138,6 +139,8 @@
+                 p += len(data)
+ 
+             self.body_readed += p
++            if p == left_body:
++                self.response_complete = True
+             return buff_view[:p].tobytes()
+         else:
+             out = list()
+@@ -185,10 +188,11 @@
+             self.queue.put(res)
+         self.finish()
+ 
+-    def finish(self):
++    def finish(self, complete=False):
+         if self.finished:
+             return
+ 
++        self.response_complete = self.response_complete or complete
+         self.put_data("")
+         self.finished = True
+ 
