@@ -54,3 +54,17 @@ Smart Router 在近 24 小时出现 3 次 `conn_list[conn_id]` 的 `KeyError`。
 旧 `_warning.log` 已包含 2026-10-27 至 2026-11-03 的 front 超时、可用 IP 不足、`get_front fail`、DNS 失败和响应长度不一致。因此不能把这些现象全部归因于近期可靠性修改。
 
 本轮没有生产故障注入、长期 soak、远端服务内部证据或本机休眠/网络切换日志。后续若继续定位共同超时，应在正常请求下对照 front 评分、worker 状态、建连/TLS 分阶段耗时和系统网络事件；不得通过修改生产参数进行猜测性试验。
+
+## 连接启动竞态修复与离线验证
+
+开发提交 `16c07e0` 为 `ProxySession` 新增 `start_conn(conn_id, left_buf=b"", block=True)`，在同一个 `RLock` 临界区内完成连接查找、可选首包传递和启动；连接已被移除时返回 `False`。Smart Router 与 X-Tunnel 的 SOCKS4、SOCKS5、HTTP、HTTPS 启动路径均改用该接口，不再在 `create_conn()` 返回后重新索引共享 `conn_list`。
+
+TDD 先新增三项回归测试，并确认 RED：均因 `ProxySession` 尚无 `start_conn` 而以 `AttributeError` 失败。最小实现及调用方迁移后，同一测试文件 8/8 通过；测试分别约束已移除连接返回 `False` 且不启动、首包先于启动且透传 `block`、空首包只启动。修改文件通过 `py_compile`，差异空白检查通过。
+
+独立审查确认五个目标启动点的首包顺序、`RLock` 重入链和 `False` 分支符合约定，但发现 SOCKS5 成功回复发送失败时仍有“先检查成员、再索引字典”的同类竞态。新增 `test_socks5_reply_failure_tolerates_concurrent_conn_removal` 后，先在原实现复现 `KeyError: 1`；提交 `49c23c9` 在同一把会话锁内用 `.get()` 获取并停止仍存在的连接，随后该文件 9/9 通过。
+
+审查另有一项延后测试改进：现有 `start_conn` 测试未构造真实并发，也未用真实 `Conn` 覆盖重入链。这是覆盖限制而非已证实的当前行为缺陷；生产对象的 `RLock` 及 `transfer_received_data()` → `send_conn_data()` 重入路径已做静态核对，本轮不顺带扩大测试改造。
+
+审查修复后重新执行完整离线回归：26 个 `tests/test_*.py`、独立模型测试和性能基线自验共 27/28 个命令通过。独立模型 30 项测试通过，性能基线 3 项自验通过。唯一失败仍是旧 `tests/test_ipv6_filter.py`：它直接加载 `/Applications/XX-Net` 的生产 TLS Relay 文件，其配置替身缺少 `ip_cal_expect_time_package_size`，触发 `AttributeError`。该失败与本轮连接启动差异无关，本轮未扩大范围修改它，也不把完整套件记为全绿。
+
+以上结果只证明离线连接生命周期路径及其既有回归范围，不能证明生产三条 front 的网络超时已经解决。本轮修复尚未部署，生产进程未重启，分支未 push。
