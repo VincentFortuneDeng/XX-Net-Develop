@@ -60,11 +60,15 @@ class Pipe:
     def remove_sock_event(self, sock, event):
         self.events.append(("remove", event))
 
+    def remove_sock(self, sock):
+        self.events.append(("remove_sock", sock))
+
 
 class Conn:
     def __init__(self):
         self.sock = object()
         self.running = True
+        self.read_started = True
         self.received_position = 0
         self.remote_acked_position = 0
         self.windows_size = 10
@@ -154,6 +158,7 @@ class MemoryBackpressureTest(unittest.TestCase):
         conn.conn_id = 1
         conn.sock = object()
         conn.running = True
+        conn.read_started = True
         conn.blocked = False
         conn.send_buffer = None
         conn._lock = threading.Lock()
@@ -208,6 +213,81 @@ class MemoryBackpressureTest(unittest.TestCase):
 
         self.assertNotIn(2, session.conn_list)
 
+    def test_create_conn_send_failure_removes_unstarted_conn(self):
+        session = self.make_session()
+        session.conn_list = {}
+        session.connection_pipe = Pipe()
+        session.last_conn_id = 0
+        session.target_on_roads = 0
+        session.trigger_more = mock.Mock()
+        session.send_conn_data = mock.Mock(side_effect=RuntimeError("create frame failed"))
+        global_var.config.windows_size = 10
+        global_var.config.windows_ack = 5
+        sock = mock.Mock()
+        sock.fileno.return_value = 10
+
+        with self.assertRaisesRegex(RuntimeError, "create frame failed"):
+            session.create_conn(sock, "example.com", 443)
+
+        self.assertEqual(session.conn_list, {})
+
+    def test_create_conn_waits_for_start_before_enabling_local_read(self):
+        session = self.make_session()
+        session.conn_list = {}
+        session.connection_pipe = Pipe()
+        session.last_conn_id = 0
+        session.target_on_roads = 0
+        session.trigger_more = mock.Mock()
+        global_var.config.windows_size = 10
+        global_var.config.windows_ack = 5
+        global_var.config.concurent_thread_num = 4
+        global_var.config.min_on_road = 1
+        sock = mock.Mock()
+        sock.fileno.return_value = 10
+
+        conn_id = session.create_conn(sock, "example.com", 443)
+
+        self.assertNotIn(("add", base.selectors.EVENT_READ), session.connection_pipe.events)
+        self.assertTrue(session.start_conn(conn_id, block=False))
+        self.assertIn(("add", base.selectors.EVENT_READ), session.connection_pipe.events)
+
+    def test_server_side_conn_still_enables_read_after_connect(self):
+        session = self.make_session()
+        session.conn_list = {}
+        session.connection_pipe = Pipe()
+        conn = base.Conn(
+            session, 2, None, b"remote.example", 443, 10, 5, False,
+            types.SimpleNamespace(debug=lambda *args: None),
+        )
+        conn.sock = mock.Mock()
+        conn.sock.fileno.return_value = 11
+        session.conn_list[2] = conn
+
+        session.update_backpressure()
+
+        self.assertIn(("add", base.selectors.EVENT_READ), session.connection_pipe.events)
+
+    def test_stale_conn_stop_cannot_remove_reused_conn_id(self):
+        session = self.make_session()
+        new_conn = RecordingConn()
+        session.conn_list = {1: new_conn}
+        old_conn = base.Conn.__new__(base.Conn)
+        old_conn.session = session
+        old_conn.conn_id = 1
+        old_conn.host = b"old.example"
+        old_conn.port = 443
+        old_conn._fd = 10
+        old_conn.running = True
+        old_conn.sock = None
+        old_conn.cmd_queue = {}
+        old_conn.connection_pipe = Pipe()
+        old_conn.xlog = types.SimpleNamespace(debug=lambda *args: None)
+
+        old_conn.do_stop("delayed old reset")
+
+        self.assertIs(session.conn_list.get(1), new_conn)
+        self.assertEqual(new_conn.events, [])
+
     def test_start_conn_returns_false_when_connection_was_removed(self):
         session = self.make_session()
         other_conn = RecordingConn()
@@ -237,6 +317,60 @@ class MemoryBackpressureTest(unittest.TestCase):
 
         self.assertTrue(started)
         self.assertEqual(conn.events, [("start", True)])
+
+    def test_start_conn_failure_stops_failed_conn_without_touching_others(self):
+        session = self.make_session()
+        conn = RecordingConn()
+        other_conn = RecordingConn()
+        conn.transfer_received_data = mock.Mock(side_effect=RuntimeError("first packet failed"))
+        session.conn_list = {1: conn, 2: other_conn}
+
+        with self.assertRaisesRegex(RuntimeError, "first packet failed"):
+            session.start_conn(1, b"first-packet")
+
+        self.assertEqual(conn.events, [("stop", "start_conn_fail")])
+        self.assertEqual(other_conn.events, [])
+
+    def test_socks4_reply_failure_stops_created_conn(self):
+        session = self.make_session()
+        conn = RecordingConn()
+        session.conn_list = {1: conn}
+        global_var.session = session
+        handler = proxy_handler.Socks5Server.__new__(proxy_handler.Socks5Server)
+        handler.connection = mock.Mock()
+        handler.connection.send.side_effect = OSError("reply failed")
+        handler.client_address = ("127.0.0.1", 12345)
+        handler.read_bytes = mock.Mock(side_effect=[
+            b"\x01",
+            b"\x00\x50\x7f\x00\x00\x01",
+        ])
+        handler.read_null_end_line = mock.Mock(return_value=b"")
+        handler.read_buffer = b""
+        handler.buffer_start = 0
+
+        with mock.patch.object(proxy, "create_conn", return_value=1):
+            handler.socks4_handler()
+
+        self.assertEqual(conn.events, [("stop", "close_on_Socks4_reply")])
+
+    def test_https_reply_failure_stops_created_conn_without_start(self):
+        session = self.make_session()
+        conn = RecordingConn()
+        session.conn_list = {1: conn}
+        global_var.session = session
+        handler = proxy_handler.Socks5Server.__new__(proxy_handler.Socks5Server)
+        handler.connection = mock.Mock()
+        handler.connection.send.side_effect = OSError("reply failed")
+        handler.client_address = ("127.0.0.1", 12345)
+        handler.read_crlf_line = mock.Mock(return_value=b"ONNECT example.com:443 HTTP/1.1")
+        handler.read_headers = mock.Mock(return_value=b"")
+        handler.read_buffer = b""
+        handler.buffer_start = 0
+
+        with mock.patch.object(proxy, "create_conn", return_value=1):
+            handler.https_handler()
+
+        self.assertEqual(conn.events, [("stop", "close_on_Https_reply")])
 
     def test_socks5_reply_failure_tolerates_concurrent_conn_removal(self):
         session = self.make_session()

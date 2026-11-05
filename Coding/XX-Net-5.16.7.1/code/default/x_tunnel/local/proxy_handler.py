@@ -214,7 +214,12 @@ class Socks5Server():
 
         xlog.info("Socks4:%r to %s:%d, conn:%d", self.client_address, addr, port, conn_id)
         reply = b"\x00\x5a" + addr_pack + struct.pack(">H", port)
-        sock.send(reply)
+        try:
+            sock.send(reply)
+        except Exception as e:
+            g.session.stop_conn(conn_id, "close_on_Socks4_reply")
+            xlog.warn("Socks4 %r connect to %s:%d conn:%d closed:%r", self.client_address, addr, port, conn_id, e)
+            return
 
         if not g.session.start_conn(conn_id, self.read_buffer[self.buffer_start:]):
             return
@@ -276,10 +281,7 @@ class Socks5Server():
         try:
             sock.send(reply)
         except Exception as e:
-            with g.session.lock:
-                conn = g.session.conn_list.get(conn_id)
-                if conn is not None:
-                    conn.do_stop("close_on_Socks5_reply")
+            g.session.stop_conn(conn_id, "close_on_Socks5_reply")
             xlog.warn("socks5 %r connect to %s:%d conn_id:%d closed:%r", self.client_address, addr, port, conn_id, e)
             return
 
@@ -319,8 +321,10 @@ class Socks5Server():
         xlog.info("https %r connect to %s:%d conn:%d", self.client_address, host, port, conn_id)
         try:
             sock.send(b'HTTP/1.1 200 OK\r\n\r\n')
-        except:
-            xlog.warn("https %r connect to %s:%d conn:%d closed.", self.client_address, host, port, conn_id)
+        except Exception as e:
+            g.session.stop_conn(conn_id, "close_on_Https_reply")
+            xlog.warn("https %r connect to %s:%d conn:%d closed:%r", self.client_address, host, port, conn_id, e)
+            return
 
         if not g.session.start_conn(conn_id, self.read_buffer[self.buffer_start:]):
             return

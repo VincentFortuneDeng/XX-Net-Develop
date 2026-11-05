@@ -521,33 +521,48 @@ class ProxySession(object):
             conn_id = self.last_conn_id
             if isinstance(host, str):
                 host = host.encode("ascii")
-            self.conn_list[conn_id] = base_container.Conn(
+            self.conn_list[conn_id] = conn = base_container.Conn(
                 self, conn_id, sock, host, port, g.config.windows_size,
                 g.config.windows_ack, True, xlog)
 
-        seq = 0
-        cmd_type = 0  # create connection
-        sock_type = 0  # TCP
-        data = struct.pack("<IBBH", seq, cmd_type, sock_type, len(host)) + host + struct.pack("<H", port)
-        self.send_conn_data(conn_id, data)
+        try:
+            seq = 0
+            cmd_type = 0  # create connection
+            sock_type = 0  # TCP
+            data = struct.pack("<IBBH", seq, cmd_type, sock_type, len(host)) + host + struct.pack("<H", port)
+            self.send_conn_data(conn_id, data)
 
-        self.target_on_roads = \
-            min(g.config.concurent_thread_num - g.config.min_on_road, self.target_on_roads + 2)
-        self.trigger_more()
+            self.target_on_roads = \
+                min(g.config.concurent_thread_num - g.config.min_on_road, self.target_on_roads + 2)
+            self.trigger_more()
 
-        if log:
-            xlog.info("Connect to %s:%d conn:%d", host, port, conn_id)
-        return conn_id
+            if log:
+                xlog.info("Connect to %s:%d conn:%d", host, port, conn_id)
+            return conn_id
+        except Exception:
+            conn.do_stop("create_conn_fail")
+            raise
 
-    def start_conn(self, conn_id, left_buf=b"", block=True):
+    def stop_conn(self, conn_id, reason):
         with self.lock:
             conn = self.conn_list.get(conn_id)
-            if conn is None:
-                return False
-            if left_buf:
-                conn.transfer_received_data(left_buf)
-            conn.start(block=block)
-            return True
+        if conn is not None:
+            conn.do_stop(reason)
+
+    def start_conn(self, conn_id, left_buf=b"", block=True):
+        try:
+            with self.lock:
+                conn = self.conn_list.get(conn_id)
+                if conn is None:
+                    return False
+                if left_buf:
+                    conn.transfer_received_data(left_buf)
+                conn.start(block=block)
+                return True
+        except Exception:
+            # do_stop 会再次获取会话锁，必须在退出当前锁后清理。
+            conn.do_stop("start_conn_fail")
+            raise
 
     # Called by stop
     def close_all_connection(self):
@@ -563,9 +578,11 @@ class ProxySession(object):
         # self.conn_list = {}
         xlog.debug("stop all connection finished")
 
-    def remove_conn(self, conn_id):
+    def remove_conn(self, conn_id, expected_conn=None):
         with self.lock:
             try:
+                if expected_conn is not None and self.conn_list.get(conn_id) is not expected_conn:
+                    return
                 self.conn_list.pop(conn_id, None)
             except Exception as e:
                 xlog.warn("remove conn:%d except:%r", conn_id, e)
@@ -582,7 +599,7 @@ class ProxySession(object):
             self.read_paused_since = None
 
         for conn in list(self.conn_list.values()):
-            if not conn.sock or not conn.running:
+            if not conn.sock or not conn.running or not conn.read_started:
                 continue
 
             conn_unacked = conn.received_position - conn.remote_acked_position

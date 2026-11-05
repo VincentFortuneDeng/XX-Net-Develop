@@ -704,10 +704,11 @@ class ParallelQuery():
     def query_worker(self, task, function):
         try:
             ips = function(task.domain, task.dns_type)
+            if len(ips):
+                task.put(ips)
             with self.generation_lock:
                 if self.generations.get((task.domain, task.dns_type)) == task.generation and len(ips):
                     g.domain_cache.set_ips(task.domain, ips, task.dns_type)
-                    task.put(ips)
         finally:
             with self.generation_lock:
                 task.pending -= 1

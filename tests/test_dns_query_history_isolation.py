@@ -1,10 +1,12 @@
 import importlib.util
 from pathlib import Path
+import queue
 import re
 import sys
 import threading
 import types
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,6 +98,44 @@ class LateParallelResultTest(unittest.TestCase):
         self.assertEqual(second, [b"192.0.2.2"])
         self.assertEqual(cache.writes, [(b"late.example", [b"192.0.2.2"], 1)])
         self.assertEqual(parallel.generations, {})
+
+    def test_older_call_keeps_its_valid_result_without_overwriting_newer_cache(self):
+        class RecordingCache:
+            def __init__(self):
+                self.writes = []
+
+            def set_ips(self, domain, ips, dns_type):
+                self.writes.append((domain, list(ips), dns_type))
+
+        class FastTimeoutQueue(queue.Queue):
+            def get(self, timeout=None):
+                return super().get(timeout=min(timeout, 0.2))
+
+        cache = RecordingCache()
+        global_var.domain_cache = cache
+        parallel = dns_module.ParallelQuery()
+        started = threading.Event()
+        release = threading.Event()
+        first_results = []
+
+        def slow(domain, dns_type):
+            started.set()
+            release.wait(1)
+            return [b"192.0.2.1"]
+
+        with mock.patch.object(dns_module, "Queue", FastTimeoutQueue):
+            first = threading.Thread(target=lambda: first_results.append(
+                parallel.query(b"shared.example", 1, [slow])))
+            first.start()
+            self.assertTrue(started.wait(1))
+            second = parallel.query(
+                b"shared.example", 1, [lambda domain, dns_type: [b"192.0.2.2"]])
+            release.set()
+            first.join(1)
+
+        self.assertEqual(second, [b"192.0.2.2"])
+        self.assertEqual(first_results, [[b"192.0.2.1"]])
+        self.assertEqual(cache.writes, [(b"shared.example", [b"192.0.2.2"], 1)])
 
 
 class DnsQueryHistoryIsolationTest(unittest.TestCase):

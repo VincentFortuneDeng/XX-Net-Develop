@@ -613,6 +613,7 @@ class Conn(object):
 
         self.cmd_queue = {}
         self.running = True
+        self.read_started = not is_client
         self.blocked = False
         self.send_buffer = b""
         self.received_position = 0
@@ -634,6 +635,7 @@ class Conn(object):
         self.next_recv_seq = 1
 
     def start(self, block):
+        self.read_started = True
         if self.sock and not self.session.read_paused:
             self.connection_pipe.add_sock_event(self.sock, self, selectors.EVENT_READ)
 
@@ -679,7 +681,7 @@ class Conn(object):
             self.sock = None
 
         # self.xlog.debug("Conn session:%s conn:%d stopped", self.session.session_id, self.conn_id)
-        self.session.remove_conn(self.conn_id)
+        self.session.remove_conn(self.conn_id, expected_conn=self)
 
     def do_connect(self, host, port):
         # self.xlog.info("session_id:%s create_conn conn:%d %s:%d", self.session.session_id, self.conn_id, host, port)
