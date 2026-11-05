@@ -83,7 +83,7 @@ class FakeH1Response:
         return self.chunks.pop(0) if self.chunks else b""
 
 
-def run_h1_response(response, timeout=1):
+def run_h1_response(response, timeout=1, send_cost=0, clock=None):
     logger = types.SimpleNamespace(
         debug=lambda *args: None, warn=lambda *args: None)
     config = types.SimpleNamespace(show_state_debug=False, http2_show_debug=False)
@@ -94,8 +94,13 @@ def run_h1_response(response, timeout=1):
     worker.logger = logger
     worker.config = config
     worker.ip_str = "test"
+    def send(data):
+        if clock is not None:
+            clock.now += send_cost
+        return len(data)
+
     worker.ssl_sock = types.SimpleNamespace(
-        send=lambda data: len(data), getsockname=lambda: None,
+        send=send, getsockname=lambda: None,
         received_size=0, ip_str="test")
     worker.record_active = lambda *args: None
     worker.get_host = lambda host: host
@@ -299,6 +304,18 @@ class FrontBodyDeadlineTest(unittest.TestCase):
         self.assertFalse(task.response_complete)
         worker.close.assert_called_once_with("read fail")
         worker.idle_cb.assert_not_called()
+
+    def test_h1_response_begin_uses_remaining_deadline(self):
+        clock = Clock()
+        response = FakeH1Response([b"abc", b""], clock=clock)
+        response.begin = mock.Mock(wraps=response.begin)
+        with mock.patch.object(http1.time, "time", side_effect=clock.time), \
+                mock.patch.object(http1.time, "monotonic", side_effect=clock.monotonic):
+            run_h1_response(response, timeout=0.1, send_cost=0.06, clock=clock)
+
+        begin_timeout = response.begin.call_args.kwargs["timeout"]
+        self.assertAlmostEqual(begin_timeout, 0.04)
+        self.assertLessEqual(clock.now, 0.100001)
 
     def test_direct_front_does_not_replace_budget_or_sleep_past_it(self):
         client = types.ModuleType("direct_front_http_client")

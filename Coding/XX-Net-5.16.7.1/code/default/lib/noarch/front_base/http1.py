@@ -171,7 +171,8 @@ class Http1Worker(HttpWorker):
 
         try:
             response = simple_http_client.Response(self.ssl_sock)
-            response.begin(timeout=timeout)
+            time_left = max(0, task.deadline - time.monotonic())
+            response.begin(timeout=time_left)
             task.set_state("response_begin")
             self.last_recv_time = time.time()
         except Exception as e:
