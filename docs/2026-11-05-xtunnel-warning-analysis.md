@@ -76,3 +76,13 @@ TDD 先新增三项回归测试，并确认 RED：均因 `ProxySession` 尚无 `
 新备份为 `backups/pre-rsync-20261105-xtunnel-conn-start-race/`，保存三份原始文件、部署差异、原/新 SHA256 清单和来源提交。部署后三份生产文件均与开发快照逐字节一致，备份与原/新清单均通过哈希复核。
 
 本次未重启 Launcher。进程仍为 PID 52948，启动时间为 2026-11-05 13:10:51，并继续监听 8085、8086，因此运行进程尚未加载新文件。只读正常请求中，`/config` 两次出现 `RemoteDisconnected`，`/debug` 返回 200；这些请求发生在旧进程上，不能归因于刚写入但尚未加载的修复，也不构成生产疗效验证。分支仍未 push。
+
+## 重启与生产验收
+
+用户随后明确回复“授权重启”。旧 PID 52948 接收正常 `SIGTERM` 后退出，使用项目自带 `/Applications/XX-Net/start -no_popup` 启动；新 PID 为 78220，启动时间为 2026-11-05 15:49:49，8085、8086 均正常监听。
+
+首轮正式黑盒为 9/10：唯一失败是 `A22-deployed-provenance` 尚未纳入本批部署清单。将新 `DEPLOYED-SHA256SUMS` 加入正式脚本后，连续三轮均为 **10/10 PASS**。每轮均验证 29 个累计部署文件来源、配置接口、禁用模块零请求、默认与显式关闭连接的各 24 路 `/debug`、全部启用模块日志视图，以及显式生产代理 `generate_204=204`。重启后 `/config` 已返回 200，但单次或三轮成功不证明间歇问题永久消失。
+
+重启后日志按堆栈所属时间复核，未发现新的目标 `KeyError` 或 `conn_list[conn_id]` 堆栈。15:52:10 一次实际 SOCKS 转发在 `smart_route.py:258` 进入 `XTunnelNotRunning`，与新增 `start_conn()` 返回 `False` 后的既有处理路径一致，证明新代码已被加载并执行；该事件不是 `KeyError`。仍观察到 DNS/front WARNING 和三条 `check_upload_not_acked lock time` ERROR，因此不能宣称共同超时或全部告警已经消除。
+
+本轮未注入生产故障，未专门触发 SOCKS5 回复失败分支，也未做长期 soak。三轮黑盒通过只代表上述验收时段和项目，不代表连接竞态或间歇网络问题已在所有生产条件下治愈。分支仍未合并或 push。

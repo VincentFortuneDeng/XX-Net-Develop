@@ -146,3 +146,11 @@
 - 部署后来源提交为 `03f8ac8e2fbd0dce988bdb303f7278aa948ff160`；三个生产文件均与开发快照逐字节一致，原始备份及原/新哈希清单复核通过。
 - 本次未重启 Launcher。进程仍为 PID 52948，启动时间为 2026-11-05 13:10:51，8085、8086 继续监听，所以新文件尚未被运行进程加载。
 - 部署后的只读正常请求中，`/config` 两次出现 `RemoteDisconnected`，`/debug` 返回 200。该结果属于未加载新文件的旧进程，不归因于本次部署修复，也不据此判断间歇代理或 front 问题是否变化。
+
+### 重启后验收
+
+- 用户明确回复“授权重启”。旧 PID 52948 经正常 `SIGTERM` 退出，随后由项目自带 `/Applications/XX-Net/start -no_popup` 启动。新 PID **78220** 于 **2026-11-05 15:49:49** 启动，8085、8086 均正常监听。
+- 首轮正式黑盒 **9/10 PASS**，唯一失败为 `A22-deployed-provenance` 尚未纳入本批清单；配置、全部模块日志视图、两种 `/debug` 和生产代理均通过。正式脚本加入 `pre-rsync-20261105-xtunnel-conn-start-race/DEPLOYED-SHA256SUMS` 后，连续三轮均 **10/10 PASS**，每轮生产代理 `generate_204` 均为 204，29 个累计部署文件与最新哈希一致。
+- 重启后 `/config` 返回 200；每轮默认与显式 `Connection: close` 的 24 路 `/debug` 均为 200，全部启用模块日志契约通过。三轮结果不用于宣称间歇问题永久治愈。
+- 按堆栈所属时间扫描重启后日志，没有新的目标 `KeyError` 或 `conn_list[conn_id]` 堆栈。15:52:10 一次实际 SOCKS 转发在 `smart_route.py:258` 进入 `XTunnelNotRunning`，证明新增 `start_conn()` 的 `False` 分支已被生产加载并执行。
+- 仍有 DNS/front WARNING 和三条 `check_upload_not_acked lock time` ERROR；未专门触发 SOCKS5 回复失败分支，未注入生产故障或进行长期 soak，不能宣称 front 共同超时或全部告警已经消除。
