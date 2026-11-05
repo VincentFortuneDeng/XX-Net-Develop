@@ -11,6 +11,7 @@ SELECT_PATTERN = re.compile(r"\bselect:(\d+(?:\.\d+)?)")
 REQUEST_PATTERN = re.compile(r"\brequest:(\d+(?:\.\d+)?)")
 TRACE_PATTERN = re.compile(r"(?:^|\s)trace:(.*?)(?: \(suppressed \d+\))?$")
 SUPPRESSED_PATTERN = re.compile(r"\(suppressed (\d+)\)")
+SESSION_ID_PATTERN = re.compile(r"([?&]session_id=)[^&\s]+", re.IGNORECASE)
 LOG_PATTERN = re.compile(
     r"^(?P<timestamp>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)"
     r"\s+-\s+\[(?P<level>[A-Z]+)\]\s+(?P<message>.*)$"
@@ -39,7 +40,9 @@ def analyze_records(records: list[dict]) -> dict:
         message = str(record.get("message", ""))
         tid = _match(TID_PATTERN, message)
         if tid is None:
-            unmatched.append(dict(record))
+            unmatched_record = dict(record)
+            unmatched_record["message"] = SESSION_ID_PATTERN.sub(r"\1[redacted]", message)
+            unmatched.append(unmatched_record)
             continue
 
         sessions_by_tid.setdefault(tid, set()).add(session)

@@ -18,6 +18,7 @@ performance:
 """
 from six.moves import queue
 import random
+import re
 import operator
 import threading
 import time
@@ -393,7 +394,9 @@ class HttpsDispatcher(object):
                 if allowed:
                     suffix = " (suppressed %d)" % suppressed if suppressed else ""
                     if not response:
-                        self.logger.warn("task %s timeout trace:%s%s", task.unique_id, task.get_trace(), suffix)
+                        safe_unique_id = re.sub(br"([?&]session_id=)[^&\s]+", br"\1[redacted]",
+                                                utils.to_bytes(task.unique_id), flags=re.IGNORECASE)
+                        self.logger.warn("task %s timeout trace:%s%s", safe_unique_id, task.get_trace(), suffix)
                     else:
                         self.logger.warn("task %s %s %s status:%d%s", method, host, path, response.status, suffix)
 

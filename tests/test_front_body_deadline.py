@@ -128,7 +128,7 @@ class FrontBodyDeadlineTest(unittest.TestCase):
                 mock.patch.object(http_common.time, "time", side_effect=next_time):
             result = dispatcher.request(
                 "POST", "ny3.xx-net.org", b"/",
-                {b"X-Path": b"/data?tid=634", b"X-Test": b"test-sensitive-marker"},
+                {b"X-Path": b"/data?tid=634&session_id=test-session-secret", b"X-Test": b"test-sensitive-marker"},
                 b"payload", timeout=1,
             )
 
@@ -138,6 +138,8 @@ class FrontBodyDeadlineTest(unittest.TestCase):
         self.assertIn("/data?tid=634", warning)
         self.assertIn("h1_req_sent", warning)
         self.assertIn("get_response", warning)
+        self.assertIn("session_id=[redacted]", warning)
+        self.assertNotIn("test-session-secret", warning)
         self.assertNotIn("test-sensitive-marker", warning)
 
     def test_direct_front_does_not_replace_budget_or_sleep_past_it(self):

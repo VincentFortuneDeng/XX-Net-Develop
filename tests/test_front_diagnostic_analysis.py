@@ -136,6 +136,20 @@ class FrontDiagnosticAnalysisTest(unittest.TestCase):
 
         self.assertEqual(result["unscoped_records"], 1)
         self.assertEqual(result["ambiguous_tids"], ["1"])
+    def test_unmatched_record_redacts_session_id_without_mutating_input(self):
+        record = {
+            "timestamp": "2026-11-05 17:44:14.867",
+            "module": "x_tunnel",
+            "session": "pid-977",
+            "message": "front retry ny3.xx-net.org/upload_logs?session_id=test-session-secret "
+                       "front:seley_front status:504 select:0.010000 request:30.000000",
+        }
+
+        result = analyzer.analyze_records([record])
+
+        self.assertNotIn("test-session-secret", result["unmatched"][0]["message"])
+        self.assertIn("session_id=[redacted]", result["unmatched"][0]["message"])
+        self.assertIn("test-session-secret", record["message"])
 
 
 if __name__ == "__main__":
