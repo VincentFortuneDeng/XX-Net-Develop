@@ -138,3 +138,11 @@
 ## 未覆盖边界
 
 生产故障路径、特殊远端行为、GUI、诊断包实际上传和长时间生产 soak 未覆盖。部署文件一致不等于运行进程已加载，更不等于生产疗效已验证。
+
+## X-Tunnel 连接竞态修复部署（2026-11-05）
+
+- 用户明确回复“可以部署”。本轮只部署 `code/default/x_tunnel/local/proxy_session.py`、`code/default/x_tunnel/local/proxy_handler.py` 和 `code/default/smart_router/local/smart_route.py`；部署前三个生产目标均与本轮修改前的开发版本一致。
+- 新备份：`backups/pre-rsync-20261105-xtunnel-conn-start-race/`。三份生产原文件、部署差异、`SHA256SUMS`、`DEPLOYED-SHA256SUMS`、`DEPLOYED-FILES` 和 `SOURCE-COMMIT` 均已保留，未覆盖或删除既有备份。
+- 部署后来源提交为 `03f8ac8e2fbd0dce988bdb303f7278aa948ff160`；三个生产文件均与开发快照逐字节一致，原始备份及原/新哈希清单复核通过。
+- 本次未重启 Launcher。进程仍为 PID 52948，启动时间为 2026-11-05 13:10:51，8085、8086 继续监听，所以新文件尚未被运行进程加载。
+- 部署后的只读正常请求中，`/config` 两次出现 `RemoteDisconnected`，`/debug` 返回 200。该结果属于未加载新文件的旧进程，不归因于本次部署修复，也不据此判断间歇代理或 front 问题是否变化。
