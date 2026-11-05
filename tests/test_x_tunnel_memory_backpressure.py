@@ -69,6 +69,17 @@ class Conn:
         self.connection_pipe = Pipe()
 
 
+class RecordingConn:
+    def __init__(self):
+        self.events = []
+
+    def transfer_received_data(self, data):
+        self.events.append(("transfer", data))
+
+    def start(self, block):
+        self.events.append(("start", block))
+
+
 class MemoryBackpressureTest(unittest.TestCase):
     def make_session(self):
         session = proxy.ProxySession.__new__(proxy.ProxySession)
@@ -191,6 +202,36 @@ class MemoryBackpressureTest(unittest.TestCase):
             threading.Event().wait(0.005)
 
         self.assertNotIn(2, session.conn_list)
+
+    def test_start_conn_returns_false_when_connection_was_removed(self):
+        session = self.make_session()
+        other_conn = RecordingConn()
+        session.conn_list = {2: other_conn}
+
+        started = session.start_conn(1, b"first-packet")
+
+        self.assertFalse(started)
+        self.assertEqual(other_conn.events, [])
+
+    def test_start_conn_transfers_first_packet_before_start(self):
+        session = self.make_session()
+        conn = RecordingConn()
+        session.conn_list = {1: conn}
+
+        started = session.start_conn(1, b"first-packet", block=False)
+
+        self.assertTrue(started)
+        self.assertEqual(conn.events, [("transfer", b"first-packet"), ("start", False)])
+
+    def test_start_conn_without_first_packet_only_starts(self):
+        session = self.make_session()
+        conn = RecordingConn()
+        session.conn_list = {1: conn}
+
+        started = session.start_conn(1)
+
+        self.assertTrue(started)
+        self.assertEqual(conn.events, [("start", True)])
 
     def test_permanent_ack_stall_eventually_resets_session(self):
         session = self.make_session()

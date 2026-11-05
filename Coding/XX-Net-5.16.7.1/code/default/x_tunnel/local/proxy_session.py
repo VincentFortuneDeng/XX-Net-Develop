@@ -539,6 +539,16 @@ class ProxySession(object):
             xlog.info("Connect to %s:%d conn:%d", host, port, conn_id)
         return conn_id
 
+    def start_conn(self, conn_id, left_buf=b"", block=True):
+        with self.lock:
+            conn = self.conn_list.get(conn_id)
+            if conn is None:
+                return False
+            if left_buf:
+                conn.transfer_received_data(left_buf)
+            conn.start(block=block)
+            return True
+
     # Called by stop
     def close_all_connection(self):
         xlog.info("start close all connection")

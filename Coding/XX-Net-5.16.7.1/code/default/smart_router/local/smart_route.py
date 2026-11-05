@@ -253,9 +253,9 @@ def do_socks(sock, host, port, client_address, left_buf=b""):
         raise XTunnelNotRunning()
 
     # xlog.debug("do_socks %r connect to %s:%d conn_id:%d", client_address, host, port, conn_id)
-    if left_buf:
-        g.x_tunnel.global_var.session.conn_list[conn_id].transfer_received_data(left_buf)
-    g.x_tunnel.global_var.session.conn_list[conn_id].start(block=True)
+    session = g.x_tunnel.global_var.session
+    if not session.start_conn(conn_id, left_buf):
+        raise XTunnelNotRunning()
 
 
 def do_unwrap_socks(sock, host, port, client_address, req, left_buf=b""):

@@ -216,10 +216,8 @@ class Socks5Server():
         reply = b"\x00\x5a" + addr_pack + struct.pack(">H", port)
         sock.send(reply)
 
-        if len(self.read_buffer) - self.buffer_start:
-            g.session.conn_list[conn_id].transfer_received_data(self.read_buffer[self.buffer_start:])
-
-        g.session.conn_list[conn_id].start(block=True)
+        if not g.session.start_conn(conn_id, self.read_buffer[self.buffer_start:]):
+            return
 
     def socks5_handler(self):
         sock = self.connection
@@ -283,10 +281,8 @@ class Socks5Server():
             xlog.warn("socks5 %r connect to %s:%d conn_id:%d closed:%r", self.client_address, addr, port, conn_id, e)
             return
 
-        if len(self.read_buffer) - self.buffer_start:
-            g.session.conn_list[conn_id].transfer_received_data(self.read_buffer[self.buffer_start:])
-
-        g.session.conn_list[conn_id].start(block=True)
+        if not g.session.start_conn(conn_id, self.read_buffer[self.buffer_start:]):
+            return
 
     def https_handler(self):
         line = self.read_crlf_line()
@@ -324,10 +320,8 @@ class Socks5Server():
         except:
             xlog.warn("https %r connect to %s:%d conn:%d closed.", self.client_address, host, port, conn_id)
 
-        if (len(self.read_buffer) - self.buffer_start) > 0:
-            g.session.conn_list[conn_id].transfer_received_data(self.read_buffer[self.buffer_start:])
-
-        g.session.conn_list[conn_id].start(block=True)
+        if not g.session.start_conn(conn_id, self.read_buffer[self.buffer_start:]):
+            return
 
     def http_handler(self, first_char):
         req_line = self.read_crlf_line()
@@ -386,7 +380,5 @@ class Socks5Server():
 
         new_req_line = b"%s %s %s" % (method, path, http_version)
         left_buf = new_req_line + self.read_buffer[(len(req_line) + 1):]
-        g.session.conn_list[conn_id].transfer_received_data(left_buf)
-
-        g.session.conn_list[conn_id].start(block=True)
+        g.session.start_conn(conn_id, left_buf)
 
