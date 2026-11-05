@@ -86,3 +86,49 @@ TDD 先新增三项回归测试，并确认 RED：均因 `ProxySession` 尚无 `
 重启后日志按堆栈所属时间复核，未发现新的目标 `KeyError` 或 `conn_list[conn_id]` 堆栈。15:52:10 一次实际 SOCKS 转发在 `smart_route.py:258` 进入 `XTunnelNotRunning`，与新增 `start_conn()` 返回 `False` 后的既有处理路径一致，证明新代码已被加载并执行；该事件不是 `KeyError`。仍观察到 DNS/front WARNING 和三条 `check_upload_not_acked lock time` ERROR，因此不能宣称共同超时或全部告警已经消除。
 
 本轮未注入生产故障，未专门触发 SOCKS5 回复失败分支，也未做长期 soak。三轮黑盒通过只代表上述验收时段和项目，不代表连接竞态或间歇网络问题已在所有生产条件下治愈。分支仍未合并或 push。
+
+## 27 日前后基线与跨层去重（后续只读诊断）
+
+### 27 日修改是否相关
+
+找到 `backups/logs-20261027/` 中 26 日至 27 日治理前的归档日志，并逐份核对 `backups/pre-rsync-20261027/` 的实际部署差异。27 日这批六份文件修改的是 WARNING 滚动、热日志节流和 DNS 包字段降级；`connect_manager.py`、`http1.py`、`http_dispatcher.py` 的差异没有改动建连、重试、响应等待或状态迁移的控制流程。
+
+归档已经包含三条 front 的响应超时、建连/TLS 失败、可用 IP 不足，以及 X-Tunnel 的 front 重试、往返失败和 Smart Router 的 DNS 下游失败。例如，约 32.2–32.7 小时的归档中，Seley、Cloudflare、TLS Relay 分别有 281、50、269 条响应超时，Smart Router 有 1,696 条 `query_dns_from_xxnet fail`。因此，现有证据不支持“27 日修改首次制造这些网络问题”。
+
+27 日至 11 月 3 日的 WARNING 归档继续出现同类事件，但节流前后行数不是同一计量口径，且两个窗口的请求量、网络环境和后续代码版本不同。即使按观测时长折算，也只能描述日志，不能据此证明真实故障变轻、变重或与 27 日修改存在因果关系。可复现脚本及完整分类结果保存在 SDD 目录的 `log_baseline.py` 和 `log-baseline.json`；统计排除了验收脚本故意产生的 `invalid log export view`，堆栈续行继承最近主行时间。
+
+### 同一批传输反复换路，不等于大量独立故障
+
+在旧 PID 52948 的 13:10:51–15:49:49 窗口内，三条 front 共记录 2,828 条带编号的 `get response timeout`，但只对应 **44 个 tid**；前 10 个 tid 贡献约 **51.5%**。其中 **20 个 tid** 分别在 Seley、Cloudflare 和 TLS Relay 上都出现响应超时。
+
+`tid=634` 从 14:38:46 到 14:57:11 持续换路和重试：Seley 首次超时后，统一调度器记录 `front retry`，X-Tunnel 记录状态 602，随后同一编号在 Cloudflare、TLS Relay 等路径继续超时。源码证实 `front_dispatcher.request()` 在总 deadline 内重新选择 front 并重试；`ProxySession` 对未完成的传输另有重试。因此，三条 front 的告警不能直接相加为三次独立用户故障，也不能把每个 WARNING 当作一个独立请求。
+
+共同失败点已缩小到：front 已被选中并发出 `/data?tid=...` 请求后，front 包装层等待 dispatcher 响应超时。Seley 同窗口的 `h1_req_sent`、`recv timeout` 和约 5 秒跟踪进一步证明至少该路径已经发送请求、但未及时收到响应。Cloudflare/TLS Relay 的同类包装层日志没有足够状态字段，不能进一步区分排队、worker、远端或本地调度。建连/TLS 失败和 IP 池不足同时存在，但不是这类已选中 front 后响应超时的同义事件。
+
+### 正常请求与系统事件对照
+
+后续采样中，普通直连 `generate_204` 返回 204（约 0.178 秒），8086 代理返回 204（约 0.377 秒），共同远端 `ny3.xx-net.org` 的 HTTPS 根路径返回 404（约 1.066 秒）。根路径 404 只证明当时 DNS、TCP、TLS 和 HTTP 服务可到达，不证明 `/data` 会话接口或此前故障时段正常。
+
+系统只读日志显示：14:33 起出现 `invalid source ip`，14:35:32 起 en0 链路与 DHCP 报告网络变化，14:35–14:43 又出现多次 DNS/代理配置变化；14:33–15:02 共记录 258 条 `invalid source ip`。这与 14:38–14:57 的 front 集中爆发在时间上重叠，是当前较强的本机网络异常线索。不过这些内核记录主要属于其他进程，且此前窗口也有 front 告警，尚不能证明它们是唯一原因。14:35–15:00 的电源日志未显示实际休眠/唤醒，只筛选到一条不代表休眠发生的 `darkwake_mode` 配置记录。15:49:49 重启后至采样时未再看到 `invalid source ip`。
+
+原始系统事件和正常请求结果保存在本计划 SDD 目录。当前仍没有远端 `/data` 内部日志或每次 front 尝试的统一分阶段关联字段，不能把共同超时唯一归因于远端服务、本机网络变化或调度器。
+
+## 当前分级结论与后续边界
+
+1. **27 日相关性：目前不支持其为根因。** 主要问题在修改前已经存在，实际差异也只改变日志行为；但日志节流使数量前后不可直接比较。
+2. **WARNING 洪峰的直接放大机制：已确认。** 少量传输在三条 front 间反复重试，跨层重复记录；它是告警数量的放大器，不是底层网络为什么超时的根因。
+3. **共同底层原因：未唯一定位。** 当前优先线索是故障窗口的本机网络/路由变化，共同远端 `/data` 服务和本地调度仍待证据区分。
+4. **本轮只完成诊断，不做猜测性修复。** 若继续，应在开发分支用离线测试设计按 tid 记录每次尝试的 front、worker、状态、阶段和耗时的最小诊断方案；另行授权后才部署或重启。是否增加“每 tid 聚合/限频”也必须与保留排障证据一起评估，不能只隐藏 WARNING。
+5. 旧 IPv6 测试失败、真实并发覆盖限制、锁耗时 ERROR 和登录协议异常仍是独立边界，不与本次网络归因混同。
+
+## Front 分阶段诊断实现与离线验收
+
+提交 `0bec792` 在 dispatcher 既有无响应 WARNING 中改用 `Task.unique_id` 和 `Task.get_trace()`，保留 Seley 经 `X-Path` 传递的原始 `/data?tid=...`，并在响应分支前统一记录 `get_response`。成功与失败仍走原有返回、计数和节流路径，不打印请求头或正文。新增测试先因旧日志缺少 tid 而 RED，实现后 `test_front_body_deadline.py` 4/4 通过。
+
+提交 `165022f` 在既有 `front retry` 放行日志中增加实际 `front`、内部 `status`、`select` 和 `request` 秒数。新增测试先因旧格式不含这些字段而 RED，实现后 `test_front_request_deadline.py` 5/5 通过；X1–X14 节流回归全部通过，其中 X7 仍验证同 tid 聚合、不同 tid 独立，X10 的 stop 尾账格式未变。总 deadline、重试和节流键未改。
+
+新增 `tests/analyze_xtunnel_front_diagnostics.py`，以 `analyze_records(records: list[dict]) -> dict` 按字符串 tid 关联可见跨层记录，保留来源、时间、front、状态、轨迹最后状态和选择/请求耗时；输出 `visible_records`、`unique_tids`、`suppressed_reports` 与 `unmatched`，不生成“独立尝试数”。CLI 只接受显式日志及输出 JSON 路径。内存关联测试和带 INFO 排除、suppressed 与未匹配记录的 CLI 样本均通过。
+
+本轮逐一执行 27 个 `tests/test_*.py`、独立模型和性能自验，共 29 个命令中 28 个通过。独立模型 30/30、性能自验 3/3、四份修改/新增 Python 文件的 `py_compile` 及 `git diff --check` 均通过。唯一失败仍是 `test_ipv6_filter.py` 的生产 TLS Relay 配置替身缺少 `ip_cal_expect_time_package_size`，与本轮诊断差异无关，未扩范围修复。逐项退出码和完整输出保存在本计划 SDD 的 `regression/`。
+
+这些测试没有复现 HTTP/2、真实远端排队、系统网络切换或生产定时行为，也没有证明共同超时已经治愈。截至本次离线验收记录，两份新诊断运行文件尚未部署或加载；后续生产观察必须按 tid 对照可见记录和系统事件，不能以短期无 WARNING 代替根因证据。
