@@ -2,8 +2,12 @@ import contextlib
 import importlib.util
 import io
 from pathlib import Path
+import socket
 import sys
+import threading
+import types
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -133,6 +137,192 @@ class KeepAliveStateTest(unittest.TestCase):
         handler.handle_one_request()
 
         self.assertEqual(handler.close_connection, 1)
+
+    def test_handler_return_does_not_close_transferred_connection(self):
+        handler = RecordingHandler.__new__(RecordingHandler)
+        handler.connection = None
+        handler.logger = Collector()
+        handler.handle_one_request = lambda: None
+
+        try:
+            handler.handle()
+        except AttributeError as error:
+            self.fail("已交接 connection=None 不应在 handler 返回时再次关闭：%r" % error)
+
+
+class ServerSocketLifecycleTest(unittest.TestCase):
+    class FakeSocket:
+        def __init__(self, fail_bind=False):
+            self.fail_bind = fail_bind
+            self.closed = False
+
+        def setsockopt(self, *args):
+            pass
+
+        def bind(self, address):
+            if self.fail_bind:
+                raise OSError("controlled bind failure")
+
+        def listen(self, backlog):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    def make_server(self):
+        server = server_module.HTTPServer.__new__(server_module.HTTPServer)
+        server.sockets = []
+        server.server_address = [("127.0.0.1", 8080)]
+        server.handler = None
+        server.args = ()
+        server.use_https = False
+        server.cert = ""
+        server.max_thread = 100
+        server.check_listen_interval = None
+        server.running = True
+        server._accepted_sockets = set()
+        server._handler_threads = set()
+        server._accepted_lock = threading.Lock()
+        server.logger = types.SimpleNamespace(
+            info=lambda *args: None, warn=lambda *args: None,
+            error=lambda *args: None, exception=lambda *args: None)
+        return server
+
+    def test_partial_bind_failure_closes_all_listeners(self):
+        server = self.make_server()
+        server.server_address = [("127.0.0.1", 8080), ("127.0.0.1", 8081)]
+        listeners = [self.FakeSocket(), self.FakeSocket(fail_bind=True)]
+
+        with mock.patch.object(server_module.socket, "socket", side_effect=listeners):
+            with self.assertRaises(Exception):
+                server.init_socket()
+
+        self.assertTrue(all(listener.closed for listener in listeners))
+        self.assertEqual(server.sockets, [])
+
+    def test_old_serve_returns_without_closing_restarted_listener(self):
+        server = self.make_server()
+        old_listener = self.FakeSocket()
+        new_listener = self.FakeSocket()
+        server.sockets = [old_listener]
+        server.check_listen_interval = -1
+        server.check_listen_port = lambda ip, port: None
+
+        def restart():
+            server.running = True
+            server.sockets = [new_listener]
+
+        server.start = restart
+        select_calls = []
+
+        def controlled_select(readers, writers, errors, timeout):
+            select_calls.append(list(readers))
+            if len(select_calls) > 1:
+                server.running = False
+            return [], [], []
+
+        with mock.patch.object(server_module.select, "select", side_effect=controlled_select), \
+                mock.patch.object(server_module.time, "sleep"):
+            server.serve_forever()
+
+        self.assertEqual(len(select_calls), 1)
+        self.assertTrue(old_listener.closed)
+        self.assertFalse(new_listener.closed)
+        self.assertEqual(server.sockets, [new_listener])
+
+    def test_shutdown_closes_accepted_socket_before_handler_is_ready(self):
+        server = self.make_server()
+        accepted = self.FakeSocket()
+        entered = threading.Event()
+        release = threading.Event()
+
+        class SlowHandler:
+            def __init__(self, sock, address, args):
+                entered.set()
+                release.wait(1)
+
+            def handle(self):
+                pass
+
+        server.handler = SlowHandler
+        process_thread = threading.Thread(target=server.process_connect, args=(accepted, ("127.0.0.1", 12345)))
+        process_thread.start()
+        self.assertTrue(entered.wait(1))
+        try:
+            server.shutdown()
+            self.assertTrue(accepted.closed)
+        finally:
+            release.set()
+            process_thread.join(1)
+        self.assertFalse(process_thread.is_alive())
+    def test_shutdown_waits_for_registered_handler_to_finish(self):
+        server = self.make_server()
+        accepted = self.FakeSocket()
+        entered = threading.Event()
+        release = threading.Event()
+        writes = []
+
+        class GatedHandler:
+            def __init__(self, sock, address, args):
+                pass
+
+            def handle(self):
+                entered.set()
+                release.wait(2)
+                writes.append("handler-finished")
+
+        server.handler = GatedHandler
+        server.process_connect(accepted, ("127.0.0.1", 12345))
+        self.assertTrue(entered.wait(1))
+        stopper = threading.Thread(target=server.shutdown)
+        stopper.start()
+        try:
+            threading.Event().wait(0.05)
+            self.assertTrue(
+                stopper.is_alive(),
+                "shutdown 必须等待已登记 handler，最终持久化不能与其并发")
+        finally:
+            release.set()
+            stopper.join(2)
+
+        self.assertFalse(stopper.is_alive())
+        self.assertEqual(writes, ["handler-finished"])
+        self.assertEqual(server._accepted_sockets, set())
+
+    def test_shutdown_wakes_real_blocking_handler_socket(self):
+        server = self.make_server()
+        accepted, peer = socket.socketpair()
+        entered = threading.Event()
+
+        class BlockingHandler:
+            def __init__(self, sock, address, args):
+                pass
+
+            def handle(self):
+                entered.set()
+                try:
+                    accepted.recv(1)
+                except OSError:
+                    pass
+
+        server.handler = BlockingHandler
+        server.process_connect(accepted, ("127.0.0.1", 12345))
+        self.assertTrue(entered.wait(1))
+        stopper = threading.Thread(target=server.shutdown)
+        stopper.start()
+        stopper.join(0.25)
+        shutdown_returned = not stopper.is_alive()
+        try:
+            self.assertTrue(
+                shutdown_returned,
+                "跨线程 close 未唤醒真实阻塞 recv，shutdown 在无期限 join 中卡住")
+        finally:
+            # 对端关闭可确定解除 recv；无论断言成败都不遗留守护外线程。
+            peer.close()
+            stopper.join(2)
+            self.assertFalse(stopper.is_alive())
+        self.assertEqual(server._accepted_sockets, set())
+        self.assertEqual(server._handler_threads, set())
 
 
 class LightweightControlHandlerTest(unittest.TestCase):

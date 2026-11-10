@@ -5,6 +5,7 @@ import socket
 import sys
 import types
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,6 +90,34 @@ class ProxyProtocolEofTest(unittest.TestCase):
                     sock = handler.conn if module_name == "smart_router" else handler.connection
                     self.assertIsInstance(error, socket.error)
                     self.assertEqual(sock.recv_calls, 1)
+
+    def test_socks5_request_and_early_data_share_one_handoff_buffer(self):
+        proxy_side, client_side = socket.socketpair()
+        handler = xtunnel_handler.Socks5Server(proxy_side, ("local", 0), {})
+        received = []
+        session = types.SimpleNamespace(
+            start_conn=lambda conn_id, data, expected_conn=None:
+                received.append((conn_id, data, expected_conn)) or True)
+        old_session = getattr(xtunnel_handler.g, "session", None)
+        xtunnel_handler.g.session = session
+        conn = object()
+        request = (b"\x01\x00" + b"\x05\x01\x00\x01" +
+                   b"\x7f\x00\x00\x01\x00\x50" + b"EARLY")
+        try:
+            client_side.sendall(request)
+            client_side.shutdown(socket.SHUT_WR)
+            with mock.patch.object(
+                    xtunnel_handler.proxy_session, "create_conn", create=True,
+                    return_value=(7, conn)):
+                handler.socks5_handler()
+
+            self.assertEqual(received, [(7, b"EARLY", conn)])
+        finally:
+            handler.rfile.close()
+            handler.wfile.close()
+            proxy_side.close()
+            client_side.close()
+            xtunnel_handler.g.session = old_session
 
 
 if __name__ == "__main__":

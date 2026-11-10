@@ -91,7 +91,8 @@ class HttpServerHandler():
 
             if self.close_connection:
                 break
-        self.connection.close()
+        if self.connection is not None:
+            self.connection.close()
         # self.logger.debug("closed from %s:%d", self.client_address[0], self.client_address[1])
 
     def address_string(self):
@@ -496,6 +497,9 @@ class HTTPServer():
         self.cert = cert
         self.max_thread = max_thread
         self.check_listen_interval = check_listen_interval
+        self._accepted_sockets = set()
+        self._handler_threads = set()
+        self._accepted_lock = threading.Lock()
         # self.logger.info("server %s:%d started.", address[0], address[1])
 
     def start(self):
@@ -509,12 +513,16 @@ class HTTPServer():
         ips = [ip for ip, _ in server_address]
         listen_all_v4 = b"0.0.0.0" in ips
         listen_all_v6 = b"::" in ips
-        for ip, port in server_address:
-            if ip not in (b"0.0.0.0", b"::") and (
-                    listen_all_v4 and b'.' in ip or
-                    listen_all_v6 and b':' in ip):
-                continue
-            self.add_listen((ip, port))
+        try:
+            for ip, port in server_address:
+                if ip not in (b"0.0.0.0", b"::") and (
+                        listen_all_v4 and b'.' in ip or
+                        listen_all_v6 and b':' in ip):
+                    continue
+                self.add_listen((ip, port))
+        except Exception:
+            self.server_close()
+            raise
 
     def add_listen(self, addr):
         ip = addr[0]
@@ -526,33 +534,34 @@ class HTTPServer():
             sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
         else:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, True)
-        addr = tuple((ip, port))
         try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, True)
+            addr = tuple((ip, port))
             sock.bind(addr)
+
+            if self.use_https:
+                import OpenSSL
+                if hasattr(OpenSSL.SSL, "TLSv1_2_METHOD"):
+                    ssl_version = OpenSSL.SSL.TLSv1_2_METHOD
+                elif hasattr(OpenSSL.SSL, "TLSv1_1_METHOD"):
+                    ssl_version = OpenSSL.SSL.TLSv1_1_METHOD
+                elif hasattr(OpenSSL.SSL, "TLSv1_METHOD"):
+                    ssl_version = OpenSSL.SSL.TLSv1_METHOD
+
+                ctx = OpenSSL.SSL.Context(ssl_version)
+                fpem = self.cert
+                ctx.use_privatekey_file(fpem)
+                ctx.use_certificate_file(fpem)
+                sock = OpenSSL.SSL.Connection(ctx, sock)
+            sock.listen(200)
         except Exception as e:
-            err_string = "bind to %s:%d fail:%r" % (addr[0], addr[1], e)
+            sock.close()
+            err_string = "listen on %s:%d fail:%r" % (ip, port, e)
             self.logger.error(err_string)
             raise Exception(err_string)
 
-        if self.use_https:
-            import OpenSSL
-            if hasattr(OpenSSL.SSL, "TLSv1_2_METHOD"):
-                ssl_version = OpenSSL.SSL.TLSv1_2_METHOD
-            elif hasattr(OpenSSL.SSL, "TLSv1_1_METHOD"):
-                ssl_version = OpenSSL.SSL.TLSv1_1_METHOD
-            elif hasattr(OpenSSL.SSL, "TLSv1_METHOD"):
-                ssl_version = OpenSSL.SSL.TLSv1_METHOD
-
-            ctx = OpenSSL.SSL.Context(ssl_version)
-            # server.pem's location (containing the server private key and the server certificate).
-            fpem = self.cert
-            ctx.use_privatekey_file(fpem)
-            ctx.use_certificate_file(fpem)
-            sock = OpenSSL.SSL.Connection(ctx, sock)
-        sock.listen(200)
         self.sockets.append(sock)
         self.logger.info("server %s:%d started.", addr[0], addr[1])
 
@@ -619,7 +628,8 @@ class HTTPServer():
                             self.logger.exception("process connect error:%r", e)
 
                     if self.check_listen_interval and last_connect_time + self.check_listen_interval < time.time():
-                        self.check_listen_port_or_reset()
+                        if self.check_listen_port_or_reset():
+                            return
                         last_connect_time = time.time()
                 except Exception as e:
                     self.logger.exception("serve except:%r", e)
@@ -649,7 +659,8 @@ class HTTPServer():
                         self.process_connect(sock, address)
 
                     if self.check_listen_interval and last_connect_time + self.check_listen_interval < time.time():
-                        self.check_listen_port_or_reset()
+                        if self.check_listen_port_or_reset():
+                            return
                         last_connect_time = time.time()
                 except Exception as e:
                     self.logger.exception("serve except:%r", e)
@@ -662,9 +673,42 @@ class HTTPServer():
             sock.close()
             return
 
-        client_obj = self.handler(sock, address, self.args)
-        client_thread = threading.Thread(target=client_obj.handle, name="handle:{}".format(address))
-        client_thread.start()
+        with self._accepted_lock:
+            if not self.running:
+                sock.close()
+                return
+            self._accepted_sockets.add(sock)
+
+        client_thread = None
+        try:
+            client_obj = self.handler(sock, address, self.args)
+            if not self.running:
+                sock.close()
+                return
+            client_thread = threading.Thread(
+                target=self._run_handler, args=(client_obj, sock),
+                name="handle:{}".format(address))
+            with self._accepted_lock:
+                if not self.running:
+                    self._accepted_sockets.discard(sock)
+                    sock.close()
+                    return
+                self._handler_threads.add(client_thread)
+                client_thread.start()
+        except Exception:
+            with self._accepted_lock:
+                self._accepted_sockets.discard(sock)
+                self._handler_threads.discard(client_thread)
+            sock.close()
+            raise
+
+    def _run_handler(self, client_obj, sock):
+        try:
+            client_obj.handle()
+        finally:
+            with self._accepted_lock:
+                self._accepted_sockets.discard(sock)
+                self._handler_threads.discard(threading.current_thread())
 
     def check_listen_port(self, ip, port):
         if ':' in ip:
@@ -694,18 +738,30 @@ class HTTPServer():
         for ip, port in self.server_address:
             res = self.check_listen_port(ip, port)
             if res:
-                return
+                return False
 
             self.logger.warn("Listen %s:%d check failed, try restart listening", ip, port)
             self.shutdown()
             time.sleep(3)
             self.start()
-            return
+            return True
 
     def shutdown(self):
         self.logger.info("shutdown")
         self.running = False
         self.server_close()
+        with self._accepted_lock:
+            accepted_sockets = list(self._accepted_sockets)
+            self._accepted_sockets.clear()
+            handler_threads = list(self._handler_threads)
+        for sock in accepted_sockets:
+            try:
+                sock.close()
+            except Exception:
+                pass
+        for handler_thread in handler_threads:
+            if handler_thread is not threading.current_thread():
+                handler_thread.join()
 
     def server_close(self):
         self.logger.info("server_close")

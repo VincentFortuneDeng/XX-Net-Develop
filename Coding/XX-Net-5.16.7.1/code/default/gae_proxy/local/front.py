@@ -1,4 +1,5 @@
 import os
+import threading
 
 current_path = os.path.dirname(os.path.abspath(__file__))
 root_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir))
@@ -32,6 +33,7 @@ class Front(object):
     def __init__(self):
         self.logger = logger
         self.config = config
+        self.running = False
 
     def start(self):
         self.running = True
@@ -81,7 +83,8 @@ class Front(object):
             logger, self.config, self.connect_creator, self.ip_manager, check_local_network)
 
         self.http_dispatcher = HttpsDispatcher(
-            logger, self.config, self.ip_manager, self.connect_manager
+            logger, self.config, self.ip_manager, self.connect_manager,
+            metrics_category="gae"
         )
 
     def check_ip(self, ip):
@@ -90,21 +93,24 @@ class Front(object):
         return self.ip_checker.check_ip(ip, sni=sni, host=host)
 
     def get_dispatcher(self):
+        if not self.running:
+            return None
         return self.http_dispatcher
 
     def request(self, method, host, path=b"/", headers={}, data="", timeout=120):
+        if not self.running:
+            return "", 602, {}
         response = self.http_dispatcher.request(method, host, path, dict(headers), data, timeout=timeout)
 
         return response
 
     def stop(self):
         logger.info("terminate")
+        self.running = False
         self.connect_manager.set_ssl_created_cb(None)
         self.http_dispatcher.stop()
         self.connect_manager.stop()
         self.ip_manager.stop()
-
-        self.running = False
 
     def set_proxy(self, args):
         logger.info("set_proxy:%s", args)
@@ -128,7 +134,8 @@ class DirectFront(object):
     name = "direct_front"
 
     def __init__(self):
-        pass
+        self.running = False
+        self._dispatch_lock = threading.Lock()
 
     def start(self):
         self.running = True
@@ -152,15 +159,21 @@ class DirectFront(object):
         self.dispatchs = {}
 
     def get_dispatcher(self, host):
-        if host not in self.dispatchs:
-            http_dispatcher = HttpsDispatcher(
-                logger, direct_config, front.ip_manager, self.connect_manager)
-            self.dispatchs[host] = http_dispatcher
+        with self._dispatch_lock:
+            if not self.running:
+                return None
+            if host not in self.dispatchs:
+                http_dispatcher = HttpsDispatcher(
+                    logger, direct_config, front.ip_manager, self.connect_manager,
+                    metrics_category="direct")
+                self.dispatchs[host] = http_dispatcher
 
-        return self.dispatchs[host]
+            return self.dispatchs[host]
 
     def request(self, method, host, path="/", headers={}, data="", timeout=60):
         dispatcher = self.get_dispatcher(host)
+        if not dispatcher:
+            return "", 602, {}
 
         response = dispatcher.request(method, host, path, dict(headers), data, timeout=timeout)
 
@@ -168,13 +181,14 @@ class DirectFront(object):
 
     def stop(self):
         logger.info("terminate")
+        with self._dispatch_lock:
+            self.running = False
+            dispatchers = list(self.dispatchs.values())
+            self.dispatchs = {}
         self.connect_manager.set_ssl_created_cb(None)
-        for host in self.dispatchs:
-            dispatcher = self.dispatchs[host]
+        for dispatcher in dispatchers:
             dispatcher.stop()
         self.connect_manager.stop()
-
-        self.running = False
 
     def set_proxy(self, args):
         self.connect_creator.update_config()

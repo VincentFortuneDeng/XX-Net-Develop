@@ -117,6 +117,8 @@ def log_info():
 
 def main(args):
     global ready, proxy_server
+    ready = False
+    proxy_server = None
     no_mess_system = args.get("no_mess_system", 0)
     allow_remote = args.get("allow_remote", 0)
 
@@ -136,14 +138,25 @@ def main(args):
         listen_ips = [("0.0.0.0"), ]
     addresses = [(listen_ip, front.config.listen_port) for listen_ip in listen_ips]
 
-    front.start()
-    direct_front.start()
-
-    proxy_server = simple_http_server.HTTPServer(
-        addresses, proxy_handler.GAEProxyHandler, logger=xlog)
+    try:
+        front.start()
+        direct_front.start()
+        proxy_server = simple_http_server.HTTPServer(
+            addresses, proxy_handler.GAEProxyHandler, logger=xlog)
+        proxy_server.init_socket()
+    except Exception:
+        ready = False
+        if proxy_server:
+            proxy_server.server_close()
+        for service in (front, direct_front):
+            try:
+                service.stop()
+            except Exception as e:
+                xlog.exception("rollback front fail:%r", e)
+        raise
 
     ready = True  # checked by launcher.module_init
-    
+
     proxy_server.serve_forever()
 
 
@@ -155,7 +168,9 @@ def terminate():
     ready = False
     front.stop()
     direct_front.stop()
-    proxy_server.shutdown()
+    if proxy_server:
+        proxy_server.shutdown()
+        proxy_server = None
 
 
 if __name__ == '__main__':
