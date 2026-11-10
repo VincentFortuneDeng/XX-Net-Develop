@@ -31,6 +31,7 @@ from queue import Queue
 import utils
 
 from . import http_common
+from . import metrics as front_metrics
 from .http1 import Http1Worker
 from .http2_connection import Http2Worker, Stream
 
@@ -51,8 +52,9 @@ class HttpsDispatcher(object):
     def __init__(self, logger, config, ip_manager, connection_manager,
                  http1worker=Http1Worker,
                  http2worker=Http2Worker,
-                 http2stream_class=None):
+                 http2stream_class=None, metrics_category=None):
         self.logger = logger
+        self.metrics_category = metrics_category
         self.config = config
         self.ip_manager = ip_manager
         self.connection_manager = connection_manager
@@ -77,6 +79,7 @@ class HttpsDispatcher(object):
         self.last_get_score_time = 0
         self.task_count_lock = threading.Lock()
         self.task_count = 0
+        self._state_lock = threading.RLock()
         self.running = True
 
         self.connect_all_workers = False
@@ -110,6 +113,8 @@ class HttpsDispatcher(object):
 
         self.trigger_create_worker_cv = SimpleCondition()
         self.wait_a_worker_cv = SimpleCondition()
+        if self.metrics_category is not None:
+            front_metrics.register(self)
 
         threading.Thread(target=self.dispatcher, name="%s_dispatcher" % self.logger.name).start()
         threading.Thread(target=self.create_worker_thread, name="%s_create_worker_thread" % self.logger.name).start()
@@ -119,8 +124,10 @@ class HttpsDispatcher(object):
             self.start_connect_all_ips()
 
     def stop(self):
-        self.running = False
-        self.request_queue.put(None)
+        with self._state_lock:
+            self.running = False
+            self.request_queue.put(None)
+        front_metrics.unregister(self)
         try:
             self.close_all_worker("stop")
         finally:
@@ -149,14 +156,20 @@ class HttpsDispatcher(object):
                 self.logger, self.ip_manager, self.config, ssl_sock,
                 self.close_cb, self.retry_task_cb, self._on_worker_idle_cb, self.log_debug_data,
                 stream_class=self.http2stream_class)
-            self.h2_num += 1
         else:
             worker = self.http1worker(
                 self.logger, self.ip_manager, self.config, ssl_sock,
                 self.close_cb, self.retry_task_cb, self._on_worker_idle_cb, self.log_debug_data)
-            self.h1_num += 1
 
-        self.workers.append(worker)
+        with self._state_lock:
+            if not self.running:
+                worker.close("dispatcher stopped")
+                return
+            self.workers.append(worker)
+            if ssl_sock.h2:
+                self.h2_num += 1
+            else:
+                self.h1_num += 1
 
         if time.time() - self.ping_speed_ip_str_last_active.get(worker.ip_str, 0) > self.config.dispather_ping_check_speed_interval:
             self.ping_speed(worker, self.config.dispather_ping_rtt_download_size)
@@ -253,10 +266,17 @@ class HttpsDispatcher(object):
                 except:
                     pass
 
-    def get_worker(self, nowait=False):
+    def get_worker(self, nowait=False, deadline=None):
         # self._debug_log("start get_worker")
 
         while self.running:
+            wait_timeout = 1
+            if deadline is not None:
+                wait_timeout = deadline - time.monotonic()
+                if wait_timeout <= 0:
+                    return None
+                wait_timeout = min(1, wait_timeout)
+
             top_score = 99999999
             best_score = 99999999
             best_worker = None
@@ -306,13 +326,13 @@ class HttpsDispatcher(object):
                 return best_worker
 
             self._debug_log("wait a new worker")
-            self.wait_a_worker_cv.wait(1)
+            self.wait_a_worker_cv.wait(wait_timeout)
 
     def _remove_slowest_worker(self):
         # close slowest worker,
         # give chance for better worker
         while True:
-            slowest_score = 9999
+            slowest_score = -1
             slowest_worker = None
             idle_num = 0
             for worker in self.workers:
@@ -339,7 +359,7 @@ class HttpsDispatcher(object):
                 return
 
             self.logger.debug("remove_slowest_worker remove %s", slowest_worker.ip_str)
-            self.close_cb(slowest_worker)
+            slowest_worker.close("remove slowest worker")
 
     def _task_log_key(self, task):
         endpoint = utils.to_bytes(task.path).split(b"?", 1)[0]
@@ -355,6 +375,10 @@ class HttpsDispatcher(object):
         path = utils.to_bytes(path)
         headers = utils.to_bytes(headers)
         body = utils.to_bytes(body)
+
+        with self._state_lock:
+            if not self.running:
+                return None
 
         if self.task_count > self.config.max_task_num:
             self.logger.warn("task num exceed")
@@ -376,8 +400,12 @@ class HttpsDispatcher(object):
             self.last_request_time = time.time()
             q = Queue()
             task = http_common.Task(self.logger, self.config, method, host, path, headers, body, q, url, timeout)
+            task.metrics_category = getattr(self, "metrics_category", None)
             task.set_state("start_request")
-            self.request_queue.put(task)
+            with self._state_lock:
+                if not self.running:
+                    return None
+                self.request_queue.put(task)
 
             try:
                 response = q.get(timeout=timeout)
@@ -387,6 +415,7 @@ class HttpsDispatcher(object):
             task.set_state("get_response")
             if response and response.status == 200:
                 self.success_num += 1
+                front_metrics.increment(getattr(self, "metrics_category", None), "requests_succeeded_total")
                 self.continue_fail_num = 0
                 task.worker.continue_fail_tasks = 0
             else:
@@ -401,6 +430,7 @@ class HttpsDispatcher(object):
                         self.logger.warn("task %s %s %s status:%d%s", method, host, path, response.status, suffix)
 
                 self.fail_num += 1
+                front_metrics.increment(getattr(self, "metrics_category", None), "requests_failed_total")
                 self.continue_fail_num += 1
                 self.last_fail_time = time.time()
                 if task.worker:
@@ -420,7 +450,15 @@ class HttpsDispatcher(object):
     def set_session_host(self, host):
         self.session_host = host
 
-    def retry_task_cb(self, task, reason=""):
+    def retry_task_cb(self, task, reason="", expected_attempt=None):
+        if task.responsed:
+            self.logger.warn("retry but responses. %s", task.url)
+            task.finish(expected_attempt=expected_attempt)
+            return
+        attempt = task.claim_retry_token(expected_attempt)
+        if attempt is None:
+            return
+
         self.fail_num += 1
         self.continue_fail_num += 1
         self.last_fail_time = time.time()
@@ -434,29 +472,23 @@ class HttpsDispatcher(object):
             else:
                 self.logger.warn("retry_task_cb: %s, trace:%s", task.url, task.get_trace())
 
-        if task.responsed:
-            self.logger.warn("retry but responses. %s", task.url)
-            # st = traceback.extract_stack()
-            # stl = traceback.format_list(st)
-            # self.logger.warn("stack:%r", repr(stl))
-            task.finish()
-            return
-
         if task.retry_count > 10:
-            task.response_fail("retry time exceed 10")
+            task.response_fail("retry time exceed 10", expected_attempt=attempt)
             return
 
         if time.time() - task.start_time > task.timeout:
-            task.response_fail("retry timeout:%d" % (time.time() - task.start_time))
+            task.response_fail("retry timeout:%d" % (time.time() - task.start_time),
+                               expected_attempt=attempt)
             return
 
         if not self.running:
-            task.response_fail("retry but stopped.")
+            task.response_fail("retry but stopped.", expected_attempt=attempt)
             return
 
         task.set_state("retry(%s)" % reason)
         task.retry_count += 1
-        self.request_queue.put(task)
+        self.request_queue.put((task, attempt))
+        front_metrics.increment(getattr(self, "metrics_category", None), "request_retries_total")
 
     def dispatcher(self):
         while self.running:
@@ -470,6 +502,13 @@ class HttpsDispatcher(object):
                 # exit
                 break
 
+            expected_attempt = None
+            if isinstance(task, tuple):
+                task, expected_attempt = task
+                with task._state_lock:
+                    if expected_attempt != task.attempt_id or not task.retry_pending or task.finished:
+                        continue
+
             get_time = time.time()
             get_cost = get_time - start_time
 
@@ -479,7 +518,7 @@ class HttpsDispatcher(object):
                 continue
 
             try:
-                worker = self.get_worker()
+                worker = self.get_worker(deadline=task.deadline)
             except Exception as e:
                 self.logger.warn("get worker fail:%r", e)
                 task.response_fail(reason="get worker fail:%r" % e)
@@ -503,9 +542,14 @@ class HttpsDispatcher(object):
             task.predict_rtt = worker.get_score()
             worker.last_request_time = get_worker_time
             try:
-                worker.request(task)
+                accepted = worker.request(task)
+                if accepted is False:
+                    task.clear_retry()
+                    self.retry_task_cb(task, "worker closed before accepting request")
             except Exception as e:
                 self.logger.exception("dispatch request:%r", e)
+                task.clear_retry()
+                self.retry_task_cb(task, "dispatch request exception")
 
         # wait up threads to exit.
         self.wait_a_worker_cv.notify()
@@ -538,6 +582,9 @@ class HttpsDispatcher(object):
                         continue
 
                     if worker.version == "2":
+                        for stream in worker.get_streams():
+                            stream.check_timeout(now)
+
                         if len(worker.streams):
                             continue
 
@@ -571,6 +618,7 @@ class HttpsDispatcher(object):
         self.h2_num = 0
 
     def log_debug_data(self, rtt, sent, received):
+        front_metrics.add_rtt(getattr(self, "metrics_category", None), rtt)
         self.rtts.append(rtt)
         if len(self.rtts) > 30:
             self.rtts.pop(0)

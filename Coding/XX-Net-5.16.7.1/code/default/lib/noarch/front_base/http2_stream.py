@@ -70,6 +70,7 @@ class Stream(object):
         self.ip_str = ip_str
         self.stream_id = stream_id
         self.task = task
+        self.attempt_id = getattr(task, "attempt_id", 0)
         self.state = STATE_IDLE
         self.get_head_time = None
         self.start_connection_point = self.connection._sock.bytes_received
@@ -80,6 +81,7 @@ class Stream(object):
         self.receive_window_manager = receive_window_manager
         self.remote_window_size = remote_window_size
         self.max_frame_size = max_frame_size
+        self._send_lock = threading.RLock()
 
         # This is the callback handed to the stream by its parent connection.
         # It is called when the stream wants to send data. It expects to
@@ -115,6 +117,8 @@ class Stream(object):
         self.response_body = []
         self.response_body_len = 0
         self.start_time = time.time()
+        self._close_lock = threading.RLock()
+        self._closed = False
 
     def start_request(self):
         """
@@ -139,31 +143,32 @@ class Stream(object):
             is_default = to_native_string(name) in default_headers
             self.add_header(name, value, replace=is_default)
 
-        # Encode the headers.
-        encoded_headers = self._encoder(self.request_headers)
+        # HPACK 动态表顺序必须与 HEADERS 入队顺序一致。
+        with self.connection._header_lock:
+            encoded_headers = self._encoder(self.request_headers)
 
-        # It's possible that there is a substantial amount of data here. The
-        # data needs to go into one HEADERS frame, followed by a number of
-        # CONTINUATION frames. For now, for ease of implementation, let's just
-        # assume that's never going to happen (16kB of headers is lots!).
-        # Additionally, since this is so unlikely, there's no point writing a
-        # test for this: it's just so simple.
-        if len(encoded_headers) > FRAME_MAX_LEN:  # pragma: no cover
-            raise ValueError("Header block too large.")
+            # It's possible that there is a substantial amount of data here. The
+            # data needs to go into one HEADERS frame, followed by a number of
+            # CONTINUATION frames. For now, for ease of implementation, let's just
+            # assume that's never going to happen (16kB of headers is lots!).
+            # Additionally, since this is so unlikely, there's no point writing a
+            # test for this: it's just so simple.
+            if len(encoded_headers) > FRAME_MAX_LEN:  # pragma: no cover
+                raise ValueError("Header block too large.")
 
-        header_frame = HeadersFrame(self.stream_id)
-        header_frame.data = encoded_headers
+            header_frame = HeadersFrame(self.stream_id)
+            header_frame.data = encoded_headers
 
-        # If no data has been provided, this is the end of the stream. Either
-        # way, due to the restriction above it's definitely the end of the
-        # headers.
-        header_frame.flags.add('END_HEADERS')
-        if self.request_body_left == 0:
-            header_frame.flags.add('END_STREAM')
+            # If no data has been provided, this is the end of the stream. Either
+            # way, due to the restriction above it's definitely the end of the
+            # headers.
+            header_frame.flags.add('END_HEADERS')
+            if self.request_body_left == 0:
+                header_frame.flags.add('END_STREAM')
 
-        # Send the header frame.
-        self.task.set_state("start send header")
-        self._send_cb(header_frame)
+            # Send the header frame.
+            self.task.set_state("start send header")
+            self._send_cb(header_frame)
 
         # Transition the stream state appropriately.
         self.state = STATE_OPEN
@@ -183,43 +188,49 @@ class Stream(object):
             self.request_headers.replace(name, value)
 
     def send_left_body(self):
-        while self.remote_window_size and not self.request_body_sended:
-            send_size = min(self.remote_window_size, self.request_body_left, self.max_frame_size)
+        with self._send_lock:
+            while self.remote_window_size > 0 and not self.request_body_sended:
+                send_size = min(self.remote_window_size, self.request_body_left, self.max_frame_size)
 
-            f = DataFrame(self.stream_id)
-            data_start = len(self.request_body) - self.request_body_left
-            f.data = self.request_body[data_start:data_start+send_size]
+                f = DataFrame(self.stream_id)
+                data_start = len(self.request_body) - self.request_body_left
+                f.data = self.request_body[data_start:data_start+send_size]
 
-            self.remote_window_size -= send_size
-            self.request_body_left -= send_size
+                self.remote_window_size -= send_size
+                self.request_body_left -= send_size
 
-            # If the length of the data is less than MAX_CHUNK, we're probably
-            # at the end of the file. If this is the end of the data, mark it
-            # as END_STREAM.
-            if self.request_body_left == 0:
-                f.flags.add('END_STREAM')
+                # If the length of the data is less than MAX_CHUNK, we're probably
+                # at the end of the file. If this is the end of the data, mark it
+                # as END_STREAM.
+                if self.request_body_left == 0:
+                    f.flags.add('END_STREAM')
 
-            # Send the frame and decrement the flow control window.
-            self._send_cb(f)
+                # Send the frame and decrement the flow control window.
+                self._send_cb(f)
 
-            # If no more data is to be sent on this stream, transition our state.
-            if self.request_body_left == 0:
-                self.request_body_sended = True
-                self._close_local()
-                self.task.set_state("end send left body")
+                # If no more data is to be sent on this stream, transition our state.
+                if self.request_body_left == 0:
+                    self.request_body_sended = True
+                    self._close_local()
+                    self.task.set_state("end send left body")
 
     def receive_frame(self, frame):
         """
         Handle a frame received on this stream.
         called by connection.
         """
+        if self._closed or getattr(self, "attempt_id", self.task.attempt_id) != self.task.attempt_id:
+            return
+
         # self.logger.debug("stream %d recved frame %r", self.stream_id, frame)
         if frame.type == WindowUpdateFrame.type:
-            self.remote_window_size += frame.window_increment
-            self.send_left_body()
+            with self._send_lock:
+                self.remote_window_size += frame.window_increment
+                self.send_left_body()
         elif frame.type == HeadersFrame.type:
-            # Begin the header block for the response headers.
-            #self.response_header_datas = [frame.data]
+            # 每个 HEADERS 块都重新积累，informational/final/trailers 不共享旧缓冲区。
+            if self.response_header_datas is None:
+                self.response_header_datas = []
             self.response_header_datas.append(frame.data)
         elif frame.type == PushPromiseFrame.type:
             self.logger.error("%s receive PushPromiseFrame:%d", self.ip_str, frame.stream_id)
@@ -227,9 +238,28 @@ class Stream(object):
             # Continue a header block begun with either HEADERS or PUSH_PROMISE.
             self.response_header_datas.append(frame.data)
         elif frame.type == DataFrame.type:
-            # Append the data to the buffer.
+            if self.response_headers is None:
+                self.close("data before final headers")
+                return
+
+            status = getattr(self, "response_status", 200)
+            has_body = simple_http_client.response_has_body(self.task.method, status)
+            declared_length = self.task.content_length
+            too_long = False
+            if declared_length is not None:
+                try:
+                    too_long = self.task.body_len + len(frame.data) > int(declared_length)
+                except (TypeError, ValueError):
+                    too_long = True
+
+            if not has_body or too_long:
+                self.close("invalid response body")
+                return
+
             if not self.task.finished:
-                self.task.put_data(frame.data)
+                if not self.task.put_data(frame.data, expected_attempt=getattr(self, "attempt_id", self.task.attempt_id)):
+                    self.close("response superseded")
+                    return
 
             if b'END_STREAM' not in frame.flags:
                 # Increase the window size. Only do this if the data frame contains
@@ -259,7 +289,7 @@ class Stream(object):
             inactive_time = time.time() - self.connection.last_recv_time
             self.logger.debug("%s Stream %d Rest by server, inactive:%d. error code:%d",
                        self.ip_str, self.stream_id, inactive_time, frame.error_code)
-            self.connection.close("RESET")
+            self.close("RESET")
         elif frame.type in FRAMES:
             # This frame isn't valid at this point.
             # Raise ValueError("Unexpected frame %s." % frame)
@@ -271,11 +301,7 @@ class Stream(object):
             pass
 
         if b'END_HEADERS' in frame.flags:
-            if self.response_headers is not None:
-                raise ProtocolError("Too many header blocks.")
-
-            # Begin by decoding the header block. If this fails, we need to
-            # tear down the entire connection.
+            # HPACK 解码失败仍是连接级错误；合法的多段响应头则由 stream 状态机处理。
             if len(self.response_header_datas) == 1:
                 header_data = self.response_header_datas[0]
             else:
@@ -287,23 +313,40 @@ class Stream(object):
                 self.logger.exception("decode h2 header %s fail:%r", header_data, e)
                 raise e
 
-            self.response_headers = HTTPHeaderMap(headers)
+            headers = HTTPHeaderMap(headers)
+            self.response_header_datas = []
+            status_header = headers.get(b":status")
+            status = int(status_header[0]) if status_header else None
 
-            # We've handled the headers, zero them out.
-            self.response_header_datas = None
+            if self.response_headers is not None:
+                # final 之后的头块是 trailers，不覆盖状态、正文长度或已交付响应。
+                pass
+            elif status is not None and 100 <= status < 200:
+                # informational 只推进协议状态，最终响应仍由后续 HEADERS 交付。
+                if status == 101:
+                    self.close("h2 upgrade unsupported")
+                    return
+            elif status is None:
+                self.close("headers before final response")
+                return
+            else:
+                self.response_headers = headers
+                self.get_head_time = time.time()
+                self.get_head_stream_num = len(self.connection.streams)
 
-            self.get_head_time = time.time()
-            self.get_head_stream_num = len(self.connection.streams)
-
-            length = self.response_headers.get("Content-Length", None)
-            if isinstance(length, list):
-                length = int(length[0])
-            if not self.task.finished:
-                self.task.content_length = length
-                self.task.set_state("h2_get_head")
-                self.send_response()
+                length = self.response_headers.get("Content-Length", None)
+                if isinstance(length, list):
+                    length = int(length[0])
+                if not self.task.finished:
+                    self.task.content_length = length
+                    self.task.set_state("h2_get_head")
+                    self.send_response()
 
         if b'END_STREAM' in frame.flags:
+            if self.response_headers is None:
+                self.close("end stream before final headers")
+                return
+
             xcost = self.response_headers.get("X-Cost", -1)
             if isinstance(xcost, list):
                 xcost = float(xcost[0])
@@ -336,13 +379,14 @@ class Stream(object):
                 self.connection.continue_timeout = 0
 
     def send_response(self):
-        if self.task.responsed:
-            self.logger.error("http2_stream send_response but responsed.%s", self.task.url)
-            self.close("h2 stream send_response but sended.")
+        attempt = getattr(self, "attempt_id", self.task.attempt_id)
+        if not self.task.mark_responsed(expected_attempt=attempt):
+            self.logger.error("http2_stream send_response but task no longer accepts response.%s", self.task.url)
+            self.close("h2 stream response superseded.")
             return
 
-        self.task.responsed = True
         status = int(self.response_headers[b':status'][0])
+        self.response_status = status
         strip_headers(self.response_headers)
         response = simple_http_client.BaseResponse(status=status, headers=self.response_headers)
         response.ssl_sock = self.connection.ssl_sock
@@ -359,13 +403,29 @@ class Stream(object):
             self.connection.close("status %d" % status)
 
     def close(self, reason="close"):
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+
+        attempt = getattr(self, "attempt_id", self.task.attempt_id)
         if not self.task.responsed:
             # self.task.set_state("stream close: %s, call retry" % reason)
             if self.task.start_time + self.task.timeout > time.time():
-                self.connection.retry_task_cb(self.task, reason)
+                self.connection.retry_task_cb(self.task, reason, expected_attempt=attempt)
+            else:
+                self.task.finish(expected_attempt=attempt)
         else:
-            # self.task.set_state("stream close: %s, finished" % reason)
-            self.task.finish(complete=reason == "end stream")
+            # 只有 END_STREAM 且声明长度完全匹配，才能交付完整响应。
+            complete = reason == "end stream"
+            status = getattr(self, "response_status", 200)
+            if complete and simple_http_client.response_has_body(self.task.method, status) and \
+                    self.task.content_length is not None:
+                try:
+                    complete = self.task.body_len == int(self.task.content_length)
+                except (TypeError, ValueError):
+                    complete = False
+            self.task.finish(complete=complete, expected_attempt=attempt)
             # empty block means fail or closed.
 
         self._close_remote()
@@ -399,7 +459,7 @@ class Stream(object):
         )
 
     def check_timeout(self, now):
-        if time.time() - self.start_time < self.task.timeout:
+        if time.monotonic() < self.task.deadline:
             return
 
         if self._remote_closed:
@@ -411,12 +471,14 @@ class Stream(object):
                   self.connection.get_trace())
         self.task.set_state("timeout")
 
+        attempt = getattr(self, "attempt_id", self.task.attempt_id)
         if self.task.responsed:
-            self.task.finish()
+            self.task.finish(expected_attempt=attempt)
         else:
-            self.task.response_fail("timeout")
+            self.task.response_fail("timeout", expected_attempt=attempt)
 
         self.connection.continue_timeout += 1
+        self.close("timeout")
         #if self.connection.continue_timeout >= self.connection.config.http2_max_timeout_tasks and \
         #        time.time() - self.connection.last_redv_time > self.connection.config.http2_timeout_active:
         #    self.connection.close("down fail")

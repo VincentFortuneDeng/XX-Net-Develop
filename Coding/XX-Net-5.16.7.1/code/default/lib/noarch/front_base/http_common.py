@@ -7,6 +7,8 @@ import simple_http_client
 
 import utils
 
+from front_base import metrics as front_metrics
+
 
 class Task(object):
     def __init__(self, logger, config, method, host, path, headers, body, queue, url, timeout):
@@ -38,6 +40,9 @@ class Task(object):
         self.finished = False
         self.response_complete = False
         self.retry_count = 0
+        self.retry_pending = False
+        self.attempt_id = 0
+        self._state_lock = threading.RLock()
 
     def to_string(self):
         out_str = " Task:%s\r\n" % self.url
@@ -49,12 +54,18 @@ class Task(object):
         out_str += "\r\n"
         return out_str
 
-    def put_data(self, data):
+    def put_data(self, data, expected_attempt=None):
         # hyper H2
         if isinstance(data, memoryview):
             data = data.tobytes()
-        self.body_queue.put(data)
-        self.body_len += len(data)
+        with self._state_lock:
+            if expected_attempt is not None and expected_attempt != self.attempt_id:
+                return False
+            if self.finished:
+                return False
+            self.body_queue.put(data)
+            self.body_len += len(data)
+            return True
 
     def read(self, size=None):
         # fail or cloe if return ""
@@ -113,7 +124,8 @@ class Task(object):
                 if not data:
                     return b''
 
-        self.body_readed += len(data)
+        with self._state_lock:
+            self.body_readed += len(data)
         return data
 
     def read_all(self):
@@ -129,6 +141,7 @@ class Task(object):
 
             self.read_buffers = []
             self.read_buffer_len = 0
+            buffered_read = p
 
             while p < left_body:
                 data = self.read()
@@ -138,7 +151,8 @@ class Task(object):
                 buff_view[p:p + len(data)] = data[0:len(data)]
                 p += len(data)
 
-            self.body_readed += p
+            with self._state_lock:
+                self.body_readed += buffered_read
             if p == left_body:
                 self.response_complete = True
             return buff_view[:p].tobytes()
@@ -172,13 +186,24 @@ class Task(object):
         out_list.append(":%d" % ((time.time() - last_time) * 1000))
         return ",".join(out_list)
 
-    def response_fail(self, reason=""):
-        if self.responsed:
-            self.logger.error("http_common responsed_fail but responed.%s", self.url)
-            self.put_data("")
-            return
+    def response_fail(self, reason="", expected_attempt=None):
+        category = getattr(self, "metrics_category", None)
+        with self._state_lock:
+            if expected_attempt is not None and expected_attempt != self.attempt_id:
+                front_metrics.increment(category, "generation_drops_total")
+                return
+            if self.responsed:
+                self.logger.error("http_common responsed_fail but responed.%s", self.url)
+                self.put_data("", expected_attempt=expected_attempt)
+                return
 
-        self.responsed = True
+            self.responsed = True
+        front_metrics.increment(category, "response_failures_total")
+        reason_text = str(reason).lower()
+        if "body" in reason_text and "timeout" in reason_text:
+            front_metrics.increment(category, "body_timeouts_total")
+        if "protocol" in reason_text or "hpack" in reason_text:
+            front_metrics.increment(category, "protocol_errors_total")
         err_text = "response_fail:%s" % reason
         self.logger.warn("%s %s", self.url, err_text)
         res = simple_http_client.BaseResponse(body=err_text)
@@ -186,15 +211,50 @@ class Task(object):
         res.worker = self.worker
         if self.queue:
             self.queue.put(res)
-        self.finish()
+        self.finish(expected_attempt=expected_attempt)
 
-    def finish(self, complete=False):
-        if self.finished:
-            return
+    def mark_responsed(self, expected_attempt=None):
+        with self._state_lock:
+            if expected_attempt is not None and expected_attempt != self.attempt_id:
+                return False
+            if self.responsed or self.finished or self.retry_pending:
+                return False
+            self.responsed = True
+            return True
 
-        self.response_complete = self.response_complete or complete
-        self.put_data("")
-        self.finished = True
+    def claim_retry_token(self, expected_attempt=None):
+        with self._state_lock:
+            if expected_attempt is not None and expected_attempt != self.attempt_id:
+                return None
+            if self.responsed or self.finished or self.retry_pending:
+                return None
+            self.retry_pending = True
+            return self.attempt_id
+
+    def claim_retry(self, expected_attempt=None):
+        return self.claim_retry_token(expected_attempt) is not None
+
+    def begin_attempt(self):
+        with self._state_lock:
+            self.attempt_id += 1
+            self.retry_pending = False
+            return self.attempt_id
+
+    def clear_retry(self):
+        with self._state_lock:
+            self.retry_pending = False
+
+    def finish(self, complete=False, expected_attempt=None):
+        with self._state_lock:
+            if expected_attempt is not None and expected_attempt != self.attempt_id:
+                return False
+            if self.finished:
+                return False
+
+            self.response_complete = self.response_complete or complete
+            self.finished = True
+            self.body_queue.put("")
+            return True
 
 
 class HttpWorker(object):

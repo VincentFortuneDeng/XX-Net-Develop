@@ -1,4 +1,5 @@
 from queue import Queue
+import socket
 import threading
 
 from .http_common import *
@@ -60,9 +61,15 @@ class Http1Worker(HttpWorker):
         return ",".join(out_list)
 
     def request(self, task):
-        self.accept_task = False
-        self.task = task
-        self.task_queue.put(task)
+        with self._lock:
+            if not self.keep_running or not self.accept_task:
+                return False
+            attempt = task.begin_attempt()
+            self.accept_task = False
+            self.task = task
+            self.task_attempt = attempt
+            self.task_queue.put(task)
+            return True
 
     def keep_alive_thread(self):
         while time.time() - self.ssl_sock.create_time < self.config.http1_first_ping_wait:
@@ -132,7 +139,24 @@ class Http1Worker(HttpWorker):
                 self.close("life_end:" + life_end_reason)
                 return
 
+    def _send_data(self, task, data, expected_attempt=None):
+        sent = 0
+        while sent < len(data):
+            time_left = task.deadline - time.monotonic()
+            if time_left <= 0:
+                raise socket.timeout("h1 send deadline")
+
+            self.ssl_sock.settimeout(time_left)
+            with task._state_lock:
+                if expected_attempt is not None and expected_attempt != task.attempt_id:
+                    raise socket.error("h1 send superseded")
+                sent_now = self.ssl_sock.send(data[sent:sent + 65535])
+            if not sent_now:
+                raise socket.error("h1 send returned no progress")
+            sent += sent_now
+
     def request_task(self, task):
+        attempt = getattr(self, "task_attempt", task.attempt_id)
         timeout = task.timeout
         self.request_onway = True
         start_time = time.time()
@@ -149,14 +173,8 @@ class Http1Worker(HttpWorker):
         request_data += b'\r\n'
 
         try:
-            self.ssl_sock.send(request_data)
-            payload_len = len(task.body)
-            start = 0
-            while start < payload_len:
-                send_size = min(payload_len - start, 65535)
-                sended = self.ssl_sock.send(task.body[start:start + send_size])
-                start += sended
-
+            self._send_data(task, request_data, expected_attempt=attempt)
+            self._send_data(task, task.body, expected_attempt=attempt)
             task.set_state("h1_req_sent")
         except Exception as e:
             self.logger.warn("%s %s h1_request send:%r inactive_time:%d task.timeout:%d",
@@ -164,15 +182,19 @@ class Http1Worker(HttpWorker):
                              e, time.time() - self.last_recv_time, task.timeout)
             self.logger.warn('%s trace:%s', self.ip_str, self.get_trace())
 
-            self.retry_task_cb(task)
+            self.retry_task_cb(task, expected_attempt=attempt)
             self.task = None
             self.close("send fail")
             return
 
         try:
             response = simple_http_client.Response(self.ssl_sock)
-            time_left = max(0, task.deadline - time.monotonic())
-            response.begin(timeout=time_left)
+            while True:
+                time_left = max(0, task.deadline - time.monotonic())
+                response.begin(timeout=time_left)
+                if 100 <= response.status < 200 and response.status != 101:
+                    continue
+                break
             task.set_state("response_begin")
             self.last_recv_time = time.time()
         except Exception as e:
@@ -180,60 +202,104 @@ class Http1Worker(HttpWorker):
                              self.ip_str, e, time.time() - self.last_recv_time, task.timeout)
             self.logger.warn('%s trace:%s', self.ip_str, self.get_trace())
 
-            self.retry_task_cb(task)
+            self.retry_task_cb(task, expected_attempt=attempt)
             self.task = None
             self.close("recv fail")
             return
 
+        if response.status == 101:
+            self.retry_task_cb(task, expected_attempt=attempt)
+            self.task = None
+            self.close("upgrade unsupported")
+            return
+
         task.set_state("h1_get_head")
 
-        if task.method == b"HEAD" or response.status in [204, 304]:
+        has_body = simple_http_client.response_has_body(task.method, response.status)
+        if not has_body:
             response.content_length = 0
 
         response.ssl_sock = self.ssl_sock
         response.task = task
         response.worker = self
         task.content_length = response.content_length
-        task.responsed = True
+        if not task.mark_responsed(expected_attempt=attempt):
+            self.task = None
+            self.close("response superseded")
+            return
         if task.queue:
             task.queue.put(response)
 
         if self.config.http2_show_debug:
                 self.logger.debug("got res for %s status:%d", self.ip_str, response.status)
 
-        try:
-            read_target = int(response.content_length)
-        except:
-            read_target = 0
+        read_target = None
+        if has_body and not response.chunked and response.content_length not in (None, b""):
+            try:
+                read_target = int(response.content_length)
+                if read_target < 0:
+                    raise ValueError("negative content length")
+            except (TypeError, ValueError):
+                task.finish(expected_attempt=attempt)
+                self.close("down fail")
+                return
 
         data_len = 0
-        while True:
+        while has_body and read_target != 0:
+            if read_target is not None:
+                remaining_body = read_target - data_len
+                if remaining_body <= 0:
+                    break
+            else:
+                remaining_body = None
+
             time_left = max(0, task.deadline - time.monotonic())
             try:
-                data = response.read(timeout=time_left)
-                if not data:
-                    break
+                data = response.read(read_len=remaining_body, timeout=time_left)
             except Exception as e:
                 self.logger.warn("read fail, ip:%s, chunk:%d url:%s task.timeout:%d e:%r",
                                  self.ip_str, response.chunked, task.url, task.timeout, e)
                 self.logger.warn('%s trace:%s', self.ip_str, self.get_trace())
+                task.finish(expected_attempt=attempt)
                 self.close("read fail")
                 return
 
-            task.put_data(data)
-            length = len(data)
-            data_len += length
-            if read_target and data_len >= read_target:
-                break
+            if not data:
+                if response.chunked:
+                    complete = response.chunked_complete
+                else:
+                    complete = read_target is None and response.eof
+                if complete:
+                    break
 
-        if read_target > data_len:
-            self.logger.warn("read fail, ip:%s, chunk:%d url:%s task.timeout:%d ",
-                             self.ip_str, response.chunked, task.url, task.timeout)
-            self.ip_manager.recheck_ip(self.ssl_sock.ip_str)
-            self.close("down fail")
+                self.logger.warn("read fail, ip:%s, chunk:%d url:%s task.timeout:%d ",
+                                 self.ip_str, response.chunked, task.url, task.timeout)
+                self.ip_manager.recheck_ip(self.ssl_sock.ip_str)
+                task.finish(expected_attempt=attempt)
+                self.close("down fail")
+                return
+
+            if remaining_body is not None and len(data) > remaining_body:
+                task.finish(expected_attempt=attempt)
+                self.close("down fail")
+                return
+
+            if not task.put_data(data, expected_attempt=attempt):
+                self.task = None
+                self.close("response superseded")
+                return
+            data_len += len(data)
+
+        if not task.finish(complete=True, expected_attempt=attempt):
+            self.task = None
+            self.close("response superseded")
             return
 
-        task.finish(complete=True)
+        if read_target is None and not response.chunked and response.eof:
+            # EOF 定界的连接之后不能继续复用。
+            self.task = None
+            self.close("eof close")
+            return
 
         self.ssl_sock.received_size += data_len
 
@@ -306,16 +372,18 @@ class Http1Worker(HttpWorker):
             self.request_onway = False
 
     def close(self, reason=""):
-        # Notify loop to exit
-        # This function may be call by outside http2
-        # When gae_proxy found the appid or ip is wrong
-        self.task_queue.put(None)
-
-        if self.task is not None:
-            if self.task.responsed:
-                self.task.finish()
-            else:
-                self.retry_task_cb(self.task)
+        # 先在同一把锁内拒绝新 request，再发布退出哨兵并捕获当前 attempt。
+        with self._lock:
+            self.accept_task = False
+            task = self.task
+            attempt = getattr(self, "task_attempt", None)
             self.task = None
+            self.task_queue.put(None)
+
+        if task is not None:
+            if task.responsed:
+                task.finish(expected_attempt=attempt)
+            else:
+                self.retry_task_cb(task, expected_attempt=attempt)
 
         super(Http1Worker, self).close(reason)

@@ -1,3 +1,4 @@
+import ast
 import importlib.util
 from pathlib import Path
 import sys
@@ -6,6 +7,7 @@ import threading
 import time
 import types
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -168,6 +170,82 @@ class FrontWaitIsolationTest(unittest.TestCase):
         self.assertEqual(front_module.session_fronts, [])
         waiter.join(1)
         self.assertFalse(waiter.is_alive())
+
+    def test_init_and_stop_clear_disabled_front_publications(self):
+        class DisabledConfig:
+            enable_gae_proxy = False
+            enable_cloudflare = False
+            enable_cloudfront = False
+            enable_seley = False
+            enable_tls_relay = False
+            enable_direct = False
+            api_server = "api.example"
+
+        global_var.config = DisabledConfig()
+        for name in ("cloudflare_front", "cloudfront_front", "seley_front", "tls_relay_front"):
+            setattr(global_var, name, object())
+        front_module.init()
+
+        for name in ("cloudflare_front", "cloudfront_front", "seley_front", "tls_relay_front"):
+            self.assertIsNone(getattr(global_var, name))
+
+        for name in ("cloudflare_front", "cloudfront_front", "seley_front", "tls_relay_front"):
+            setattr(global_var, name, object())
+        front_module.stop()
+        for name in ("cloudflare_front", "cloudfront_front", "seley_front", "tls_relay_front"):
+            self.assertIsNone(getattr(global_var, name))
+
+    def test_statistic_thread_stops_when_front_registry_is_replaced(self):
+        sleep_calls = []
+        statistic_calls = []
+
+        class Dispatcher:
+            def statistic(self):
+                statistic_calls.append(1)
+                front_module.all_fronts = []
+
+        front = types.SimpleNamespace(
+            get_dispatcher=lambda: Dispatcher())
+        front_module.all_fronts = [front]
+        global_var.running = True
+
+        def fake_sleep(seconds):
+            sleep_calls.append(seconds)
+            if len(sleep_calls) == 2:
+                global_var.running = False
+
+        try:
+            with mock.patch.object(front_module.time, "sleep", side_effect=fake_sleep):
+                front_module.front_staticstic_thread()
+        finally:
+            global_var.running = False
+
+        self.assertEqual(statistic_calls, [1])
+        self.assertEqual(sleep_calls, [3])
+
+    def test_client_enables_running_before_starting_front_statistics(self):
+        client_path = APP / "x_tunnel" / "local" / "client.py"
+        tree = ast.parse(client_path.read_text(encoding="utf-8"), filename=str(client_path))
+        start_node = next(node for node in tree.body
+                          if isinstance(node, ast.FunctionDef) and node.name == "start")
+        running_line = None
+        front_init_line = None
+        for node in ast.walk(start_node):
+            if isinstance(node, ast.Assign) and any(
+                    isinstance(target, ast.Attribute) and target.attr == "running" and
+                    isinstance(node.value, ast.Constant) and node.value.value is True
+                    for target in node.targets):
+                running_line = node.lineno
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and \
+                    isinstance(node.value.func, ast.Attribute) and \
+                    isinstance(node.value.func.value, ast.Name) and \
+                    node.value.func.value.id == "front_dispatcher" and \
+                    node.value.func.attr == "init":
+                front_init_line = node.lineno
+
+        self.assertIsNotNone(running_line)
+        self.assertIsNotNone(front_init_line)
+        self.assertLess(running_line, front_init_line)
 
 
 if __name__ == "__main__":

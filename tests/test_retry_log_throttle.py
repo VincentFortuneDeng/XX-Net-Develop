@@ -14,6 +14,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE = os.path.join(REPO, "Coding", "XX-Net-5.16.7.1", "code", "default")
 NOARCH = os.path.join(BASE, "lib", "noarch")
 FRONT_BASE = os.path.join(NOARCH, "front_base")
+sys.path.insert(0, NOARCH)  # 让按文件执行的真实 xlog 能解析其同目录依赖。
 
 # 按文件加载真实 xlog.LogThrottle，外部依赖保持最小 stub。
 utils_stub = types.ModuleType("utils")
@@ -108,6 +109,7 @@ def make_dispatcher(logger):
     disp.task_count = 0
     disp.task_count_lock = threading.Lock()
     disp.request_queue = queue.Queue()
+    disp._state_lock = threading.Lock()
     disp.trigger_create_worker_cv = Notify()
     disp.running = True
     disp.success_num = 0
@@ -134,6 +136,9 @@ def make_task(disp, tid, front="198.18.0.159", host=b"ny3.xx-net.org",
 def retry_once(disp, task):
     disp.retry_task_cb(task)
     queued = disp.request_queue.get_nowait()
+    if isinstance(queued, tuple):
+        queued, expected_attempt = queued
+        assert expected_attempt == task.attempt_id
     assert queued is task
 
 

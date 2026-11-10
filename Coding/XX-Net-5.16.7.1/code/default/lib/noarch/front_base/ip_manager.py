@@ -221,6 +221,9 @@ class IpManager(IpManagerBase):
 
         self.scan_thread_lock = threading.Lock()
         self.ip_lock = threading.Lock()
+        self._scan_lifecycle_lock = threading.RLock()
+        self._scan_generation = 0
+        self._stopped = False
         self.reset()
 
         self.check_ip_thread = threading.Thread(target=self.check_ip_process, name="%s_ip_manager_check_ip" % self.logger.name)
@@ -231,10 +234,15 @@ class IpManager(IpManagerBase):
             self.scan_all_exist_ip()
 
     def reset(self):
+        with self._scan_lifecycle_lock:
+            self._scan_generation += 1
+            generation = self._scan_generation
+            self.scan_thread_count = 0
+            self.running = not self._stopped
+
         self.ip_lock.acquire()
         self.ip_pointer = 0
         self.ip_pointer_reset_time = 0
-        self.scan_thread_count = 0
         self.scan_fail_count = 0
         self.scan_recheck_interval = 3
         self.iplist_need_save = False
@@ -243,7 +251,6 @@ class IpManager(IpManagerBase):
         self.good_ip_num = 0  # only success ip num
         self.good_ipv4_num = 0
         self.good_ipv6_num = 0
-        self.running = True
 
         # ip_str => {
         # 'handshake_time'=>?ms,
@@ -277,7 +284,9 @@ class IpManager(IpManagerBase):
 
         # if check_local_network.network_stat == "OK" and not config.USE_IPV6:
         #    self.start_scan_all_exist_ip()
-        self.search_more_ip()
+        with self._scan_lifecycle_lock:
+            if self.running and generation == self._scan_generation:
+                self.search_more_ip()
 
     def is_ip_enough(self):
         if len(self.ip_list) >= self.max_good_ip_num:
@@ -832,9 +841,14 @@ class IpManager(IpManagerBase):
         finally:
             self.ip_lock.release()
 
-    def recheck_ip(self, ip_str, first_report=True):
+    def recheck_ip(self, ip_str, first_report=True, generation=None):
         # recheck ip if not work.
         # can block.
+        if generation is not None:
+            with self._scan_lifecycle_lock:
+                if generation != self._scan_generation or not self.running:
+                    return
+
         if not self.check_local_network.is_ok(ip_str):
             self.logger.debug("recheck_ip:%s network is fail", ip_str)
             return
@@ -843,32 +857,49 @@ class IpManager(IpManagerBase):
             self.report_connect_fail(ip_str)
 
         result = self.check_ip(ip_str)
+        retry = False
 
-        if ip_str not in self.ip_dict:
-            # may deleted by other thread
-            return
+        with self._scan_lifecycle_lock:
+            if generation is not None and (
+                    generation != self._scan_generation or not self.running):
+                return
 
-        if not result:
-            if first_report:
-                if self.ip_dict[ip_str]['fail_times'] <= 2:
-                    # connect max fail 3 times.
-                    # do nothing
-                    return
+            if ip_str not in self.ip_dict:
+                # may deleted by other thread
+                return
+
+            if not result:
+                if first_report:
+                    if self.ip_dict[ip_str]['fail_times'] <= 2:
+                        # connect max fail 3 times.
+                        # do nothing
+                        return
+                    self.report_connect_fail(ip_str, force_remove=True)
+                    self.logger.debug("recheck_ip:%s real fail, removed.", ip_str)
                 else:
-                    time.sleep(5)
-                    self.recheck_ip(ip_str)
-                    return
+                    retry = True
+            elif not result.ok:
+                self.report_connect_fail(ip_str, force_remove=True)
+                self.logger.debug("recheck_ip:%s real fail, removed.", ip_str)
+            else:
+                self.add_ip(ip_str, result.request_time, result.domain)
+                self.logger.debug("recheck_ip:%s restore ok", ip_str)
 
-        if not result or not result.ok:
-            self.report_connect_fail(ip_str, force_remove=True)
-            self.logger.debug("recheck_ip:%s real fail, removed.", ip_str)
-        else:
-            self.add_ip(ip_str, result.request_time, result.domain)
-            self.logger.debug("recheck_ip:%s restore ok", ip_str)
+        if retry:
+            time.sleep(5)
+            self.recheck_ip(ip_str, generation=generation)
 
-    def scan_ip_worker(self):
+    def scan_ip_worker(self, generation=None):
+        with self._scan_lifecycle_lock:
+            if generation is None:
+                generation = self._scan_generation
+
         recheck_ip = False
-        while self.scan_thread_count <= self.scan_ip_thread_num and self.running:
+        while True:
+            with self._scan_lifecycle_lock:
+                if (generation != self._scan_generation or not self.running or
+                        self.scan_thread_count > self.scan_ip_thread_num):
+                    break
             time.sleep(self.config.scan_ip_interval)
             try:
                 # work for idle and too many scan failures
@@ -881,7 +912,7 @@ class IpManager(IpManagerBase):
                         host_info = self.get_ip_sni_host()
                         ip_str = host_info["ip_str"]
                         if ip_str and self.check_local_network.is_ok(ip_str):
-                            self.recheck_ip(ip_str, first_report=False)
+                            self.recheck_ip(ip_str, first_report=False, generation=generation)
                             time.sleep(self.scan_recheck_interval)
                             continue
                     else:
@@ -904,54 +935,65 @@ class IpManager(IpManagerBase):
                     time.sleep(5)
                 result = self.check_ip(ip_str)
 
-                self.scan_thread_lock.acquire()
-                if result:
-                    self.scan_fail_count = 0
-                else:
-                    self.scan_fail_count += 1
-                    if self.scan_thread_count and self.scan_fail_count / self.scan_thread_count > 3:
-                        self.scan_fail_count = 0
-                        self.check_local_network.report_fail(ip_str)
-                        recheck_ip = True
-                self.scan_thread_lock.release()
+                with self._scan_lifecycle_lock:
+                    if generation != self._scan_generation or not self.running:
+                        break
 
-                if not result or not result.ok:
-                    continue
+                    self.scan_thread_lock.acquire()
+                    try:
+                        if result:
+                            self.scan_fail_count = 0
+                        else:
+                            self.scan_fail_count += 1
+                            if self.scan_thread_count and self.scan_fail_count / self.scan_thread_count > 3:
+                                self.scan_fail_count = 0
+                                self.check_local_network.report_fail(ip_str)
+                                recheck_ip = True
+                    finally:
+                        self.scan_thread_lock.release()
 
-                if self.add_ip(ip_str, result.request_time, result.domain):
-                    # self.logger.info("add  %s  CN:%s  type:%s  time:%d  target:%d ", ip,
-                    #     result.domain, result.server_type, result.handshake_time, len(self.ip_list))
-                    self.logger.info("scan_ip add ip:%s time:%d h2:%d", ip_str, result.request_time, result.h2)
-                    if self.scan_ip_log:
-                        self.scan_ip_log.info("Add %s time:%d CN:%s ", ip_str, result.request_time, result.domain)
-                    self.remove_slowest_ip()
-                    self.save()
+                    if not result or not result.ok:
+                        continue
+
+                    if self.add_ip(ip_str, result.request_time, result.domain):
+                        # self.logger.info("add  %s  CN:%s  type:%s  time:%d  target:%d ", ip,
+                        #     result.domain, result.server_type, result.handshake_time, len(self.ip_list))
+                        self.logger.info("scan_ip add ip:%s time:%d h2:%d", ip_str, result.request_time, result.h2)
+                        if self.scan_ip_log:
+                            self.scan_ip_log.info("Add %s time:%d CN:%s ", ip_str, result.request_time, result.domain)
+                        self.remove_slowest_ip()
+                        self.save()
             except Exception as e:
                 self.logger.exception("scan_ip_worker except:%r", e)
 
-        self.scan_thread_lock.acquire()
-        self.scan_thread_count -= 1
-        self.scan_thread_lock.release()
+        with self._scan_lifecycle_lock:
+            if generation == self._scan_generation and self.scan_thread_count > 0:
+                self.scan_thread_count -= 1
         # self.logger.info("scan_ip_worker exit")
 
     def search_more_ip(self):
-        if not self.ip_source:
-            return
+        with self._scan_lifecycle_lock:
+            if not self.ip_source or not self.running:
+                return
 
-        if self.scan_ip_thread_num > self.config.max_scan_ip_thread_num:
-            self.scan_ip_thread_num = self.config.max_scan_ip_thread_num
+            generation = self._scan_generation
+            if self.scan_ip_thread_num > self.config.max_scan_ip_thread_num:
+                self.scan_ip_thread_num = self.config.max_scan_ip_thread_num
 
-        new_thread_num = self.scan_ip_thread_num - self.scan_thread_count
-        if new_thread_num < 1:
-            return
+            new_thread_num = self.scan_ip_thread_num - self.scan_thread_count
+            if new_thread_num < 1:
+                return
 
-        for i in range(0, new_thread_num):
-            self.scan_thread_lock.acquire()
-            self.scan_thread_count += 1
-            self.scan_thread_lock.release()
-
-            p = threading.Thread(target=self.scan_ip_worker, name="%s_ip_manager_scan_ip" % self.logger.name)
-            p.start()
+            for i in range(0, new_thread_num):
+                self.scan_thread_count += 1
+                p = threading.Thread(
+                    target=self.scan_ip_worker, args=(generation,),
+                    name="%s_ip_manager_scan_ip" % self.logger.name)
+                try:
+                    p.start()
+                except Exception:
+                    self.scan_thread_count -= 1
+                    raise
 
     def scan_all_exist_ip(self):
         # stop all scan ip threads
@@ -1042,4 +1084,8 @@ class IpManager(IpManagerBase):
         self.try_sort_ip(True)
 
     def stop(self):
-        self.running = False
+        with self._scan_lifecycle_lock:
+            self._stopped = True
+            self.running = False
+            self._scan_generation += 1
+            self.scan_thread_count = 0

@@ -102,6 +102,10 @@ class Http2Worker(HttpWorker):
         self.ping_on_way = 0
         self.accept_task = False
 
+        # request/close 只在这里交换状态，网络回调在锁外执行。
+        self._state_lock = threading.RLock()
+        self._closing = False
+
         # request_lock
         self.request_lock = threading.Lock()
 
@@ -110,6 +114,8 @@ class Http2Worker(HttpWorker):
         # every frame put to this queue must allowed by stream window and connection window
         # any data frame blocked by connection window should put to self.blocked_send_frames
         self.send_queue = queue.Queue()
+        self._send_lock = threading.RLock()
+        self._header_lock = threading.RLock()
         self.encoder = Encoder()
         self.decoder = Decoder()
 
@@ -134,8 +140,7 @@ class Http2Worker(HttpWorker):
             SettingsFrame.MAX_CONCURRENT_STREAMS: 100
         }
 
-        #self.remote_window_size = DEFAULT_WINDOW_SIZE
-        self.remote_window_size = 32 * 1024 * 1024
+        self.remote_window_size = DEFAULT_WINDOW_SIZE
 
         # send Setting frame before accept task.
         self._send_preamble()
@@ -145,35 +150,64 @@ class Http2Worker(HttpWorker):
 
     # export api
     def request(self, task):
-        if not self.keep_running:
-            # race condition
-            self.retry_task_cb(task)
-            return
-
-        if len(self.streams) > self.config.http2_max_concurrent:
-            self.accept_task = False
-
         task.set_state("h2_req")
-        self.request_task(task)
+        if not self.request_task(task):
+            # 未接受的 attempt 必须先交还 claim，才能重新排队。
+            task.clear_retry()
+            self.retry_task_cb(task)
 
     def encode_header(self, headers):
         return self.encoder.encode(headers)
 
     def request_task(self, task):
         with self.request_lock:
-            # create stream to process task
-            stream_id = self.next_stream_id
+            with self._state_lock:
+                if self._closing or not self.keep_running:
+                    return False
 
-            # http/2 client use odd stream_id
-            self.next_stream_id += 2
+                stream_id = self.next_stream_id
+                self.next_stream_id += 2
+                stream = self.stream_class(
+                    self.logger, self.config, self, self.ip_str, stream_id, task,
+                    self._send_cb, self._close_stream_cb, self.encode_header, self.decoder,
+                    FlowControlManager(self.local_settings[SettingsFrame.INITIAL_WINDOW_SIZE]),
+                    self.remote_settings[SettingsFrame.INITIAL_WINDOW_SIZE],
+                    self.remote_settings[SettingsFrame.SETTINGS_MAX_FRAME_SIZE])
 
-            stream = self.stream_class(self.logger, self.config, self, self.ip_str, stream_id, task,
-                            self._send_cb, self._close_stream_cb, self.encode_header, self.decoder,
-                            FlowControlManager(self.local_settings[SettingsFrame.INITIAL_WINDOW_SIZE]),
-                            self.remote_settings[SettingsFrame.INITIAL_WINDOW_SIZE],
-                            self.remote_settings[SettingsFrame.SETTINGS_MAX_FRAME_SIZE])
-            self.streams[stream_id] = stream
+                # 构造期间可能发生重入 close，登记前必须再次确认。
+                if self._closing or not self.keep_running:
+                    return False
+                # 新 attempt 在接受点取得单调身份，旧 stream 的迟到回调不得再操作 Task。
+                stream.attempt_id = task.begin_attempt()
+                self.streams[stream_id] = stream
+
+            if len(self.streams) > self.config.http2_max_concurrent:
+                self.accept_task = False
+
+        try:
             stream.start_request()
+        except Exception:
+            stream.close("request fail")
+        return True
+
+    def get_streams(self):
+        with self._state_lock:
+            return list(self.streams.values())
+
+    def _should_send_frame(self, frame):
+        stream_id = getattr(frame, "stream_id", 0)
+        if not stream_id:
+            return True
+
+        with self._state_lock:
+            stream = self.streams.get(stream_id)
+            if stream is None or getattr(stream, "_closed", False):
+                return False
+            task = stream.task
+            attempt = getattr(stream, "attempt_id", None)
+            if attempt is not None and attempt != task.attempt_id:
+                return False
+            return not task.finished and not task.retry_pending and time.monotonic() < task.deadline
 
     def h2_send_loop(self):
         while self.keep_running:
@@ -181,6 +215,13 @@ class Http2Worker(HttpWorker):
             if not frame:
                 # None frame means exist
                 break
+
+            if not self._should_send_frame(frame):
+                if frame.type == DataFrame.type:
+                    # 只有 DATA 已扣除连接窗口，丢弃时必须返还。
+                    with self._send_lock:
+                        self.remote_window_size += len(frame.data)
+                continue
 
             if self.config.http2_show_debug:
                 self.logger.debug("%s Send:%s", self.ip_str, str(frame))
@@ -220,6 +261,13 @@ class Http2Worker(HttpWorker):
                 self.close("recv fail:%r" % e)
 
     def close(self, reason="conn close"):
+        with self._state_lock:
+            if self._closing:
+                return
+            self._closing = True
+            self.accept_task = False
+            streams = list(self.streams.values())
+
         # Notify loop to exit
         # This function may be call by out side http2
         # When gae_proxy found the appid or ip is wrong
@@ -231,14 +279,8 @@ class Http2Worker(HttpWorker):
             self.logger.warn("%s close, reason: %s, trace:%s", self.ip_str, reason, self.get_trace())
         self.send_queue.put(None)
 
-        for stream in list(self.streams.values()):
-            if stream.task.responsed or stream.task.start_time + stream.task.timeout < time.time():
-                # response have sent to client, or timeout
-                # can't retry
-                stream.close(reason=reason)
-            else:
-                self.retry_task_cb(stream.task)
-        self.streams = {}
+        for stream in streams:
+            stream.close(reason=reason)
         super(Http2Worker, self).close(reason)
 
     def send_ping(self):
@@ -264,17 +306,17 @@ class Http2Worker(HttpWorker):
         self._send_cb(f)
 
     def increase_remote_window_size(self, inc_size):
-        # check and send blocked frames if window allow
-        self.remote_window_size += inc_size
-        #self.logger.debug("%s increase send win:%d result:%d", self.ip, inc_size, self.remote_window_size)
-        while len(self.blocked_send_frames):
-            frame = self.blocked_send_frames[0]
-            if len(frame.data) > self.remote_window_size:
-                return
+        # 窗口扣减、阻塞帧搬运和恢复共用同一账本边界。
+        with self._send_lock:
+            self.remote_window_size += inc_size
+            while self.blocked_send_frames:
+                frame = self.blocked_send_frames[0]
+                if len(frame.data) > self.remote_window_size:
+                    break
 
-            self.remote_window_size -= len(frame.data)
-            self.send_queue.put(frame)
-            self.blocked_send_frames.pop(0)
+                self.remote_window_size -= len(frame.data)
+                self.blocked_send_frames.pop(0)
+                self.send_queue.put(frame)
 
         if self.keep_running and \
                 self.accept_task == False and \
@@ -284,28 +326,34 @@ class Http2Worker(HttpWorker):
             self.idle_cb()
 
     def _send_cb(self, frame):
-        # can be called by stream
-        # put to send_blocked if connection window not allow,
-        if frame.type in [HeadersFrame.type, DataFrame.type]:
+        # HEADERS 不受 DATA 连接流控限制。
+        if frame.type != DataFrame.type:
+            self.send_queue.put(frame)
+            return
+
+        with self._send_lock:
             if len(frame.data) > self.remote_window_size:
                 self.blocked_send_frames.append(frame)
                 self.accept_task = False
                 return
-            else:
-                self.remote_window_size -= len(frame.data)
-                self.send_queue.put(frame)
-        else:
+
+            self.remote_window_size -= len(frame.data)
             self.send_queue.put(frame)
 
     def _close_stream_cb(self, stream_id, reason):
-        # call by stream to remove from streams list
-        # self.logger.debug("%s close stream:%d %s", self.ssl_sock.ip, stream_id, reason)
-        try:
-            del self.streams[stream_id]
-        except KeyError:
-            pass
+        # 只有真实删除才计数；重复 close 不制造处理量。
+        with self._state_lock:
+            try:
+                del self.streams[stream_id]
+            except KeyError:
+                return
+            self.processed_tasks += 1
 
-        self.processed_tasks += 1
+        with self._send_lock:
+            self.blocked_send_frames = [
+                frame for frame in self.blocked_send_frames
+                if frame.stream_id != stream_id
+            ]
 
         if len(self.streams) == 0 and self.is_life_end():
             self.close("life end")
@@ -480,34 +528,38 @@ class Http2Worker(HttpWorker):
         if SettingsFrame.HEADER_TABLE_SIZE in frame.settings:
             new_size = frame.settings[SettingsFrame.HEADER_TABLE_SIZE]
 
-            self.remote_settings[SettingsFrame.HEADER_TABLE_SIZE] = new_size
-            #self.encoder.header_table_size = new_size
+            with self._header_lock:
+                self.remote_settings[SettingsFrame.HEADER_TABLE_SIZE] = new_size
+                self.encoder.header_table_size = new_size
 
-        if SettingsFrame.INITIAL_WINDOW_SIZE in frame.settings:
-            newsize = frame.settings[SettingsFrame.INITIAL_WINDOW_SIZE]
-            oldsize = self.remote_settings[SettingsFrame.INITIAL_WINDOW_SIZE]
-            delta = newsize - oldsize
+        with self._state_lock:
+            if SettingsFrame.INITIAL_WINDOW_SIZE in frame.settings:
+                newsize = frame.settings[SettingsFrame.INITIAL_WINDOW_SIZE]
+                oldsize = self.remote_settings[SettingsFrame.INITIAL_WINDOW_SIZE]
+                delta = newsize - oldsize
 
-            for stream in list(self.streams.values()):
-                stream.remote_window_size += delta
+                for stream in list(self.streams.values()):
+                    with stream._send_lock:
+                        stream.remote_window_size += delta
 
-            self.remote_settings[SettingsFrame.INITIAL_WINDOW_SIZE] = newsize
+                self.remote_settings[SettingsFrame.INITIAL_WINDOW_SIZE] = newsize
 
-        if SettingsFrame.SETTINGS_MAX_FRAME_SIZE in frame.settings:
-            new_size = frame.settings[SettingsFrame.SETTINGS_MAX_FRAME_SIZE]
-            if not (FRAME_MAX_LEN <= new_size <= FRAME_MAX_ALLOWED_LEN):
-                self.logger.error("%s Frame size %d is outside of allowed range", self.ip_str, new_size)
+            if SettingsFrame.SETTINGS_MAX_FRAME_SIZE in frame.settings:
+                new_size = frame.settings[SettingsFrame.SETTINGS_MAX_FRAME_SIZE]
+                if not (FRAME_MAX_LEN <= new_size <= FRAME_MAX_ALLOWED_LEN):
+                    self.logger.error("%s Frame size %d is outside of allowed range", self.ip_str, new_size)
 
-                # Tear the connection down with error code PROTOCOL_ERROR
-                self.close("bad max frame size")
-                #error_string = ("Advertised frame size %d is outside of range" % (new_size))
-                #raise ConnectionError(error_string)
-                return
+                    # Tear the connection down with error code PROTOCOL_ERROR
+                    self.close("bad max frame size")
+                    #error_string = ("Advertised frame size %d is outside of range" % (new_size))
+                    #raise ConnectionError(error_string)
+                    return
 
-            self.remote_settings[SettingsFrame.SETTINGS_MAX_FRAME_SIZE] = new_size
+                self.remote_settings[SettingsFrame.SETTINGS_MAX_FRAME_SIZE] = new_size
 
-            for stream in list(self.streams.values()):
-                stream.max_frame_size += new_size
+                for stream in list(self.streams.values()):
+                    with stream._send_lock:
+                        stream.max_frame_size = new_size
 
     def get_trace(self):
         now = time.time()

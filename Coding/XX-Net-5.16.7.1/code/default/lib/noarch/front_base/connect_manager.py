@@ -34,6 +34,7 @@ class ConnectPool():
         self.pool_lock = threading.Lock()
         self.not_empty = threading.Condition(self.pool_lock)
         self.pool = {}
+        self.closed = False
 
     def qsize(self):
         return len(self.pool)
@@ -42,30 +43,38 @@ class ConnectPool():
         handshake_time, sock = item
         self.not_empty.acquire()
         try:
+            if self.closed:
+                sock.close()
+                return False
             self.pool[sock] = handshake_time
             self.not_empty.notify()
+            return True
         finally:
             self.not_empty.release()
 
     def get(self, block=True, timeout=None):
         self.not_empty.acquire()
         try:
+            if self.closed:
+                return None
             if not block:
                 if self.qsize() == 0:
                     return None
             elif timeout is None:
-                while self.qsize() == 0:
+                while self.qsize() == 0 and not self.closed:
                     self.not_empty.wait()
             elif timeout < 0:
                 raise ValueError("'timeout' must be a positive number")
             else:
                 end_time = time.time() + timeout
-                while not self.qsize():
+                while not self.qsize() and not self.closed:
                     remaining = end_time - time.time()
                     if remaining <= 0.0:
                         return None
                     self.not_empty.wait(remaining)
 
+            if self.closed or not self.qsize():
+                return None
             item = self._get()
             return item
         finally:
@@ -132,6 +141,19 @@ class ConnectPool():
         finally:
             self.pool_lock.release()
 
+    def close(self):
+        self.pool_lock.acquire()
+        try:
+            self.closed = True
+            socks = list(self.pool)
+            self.pool = {}
+            self.not_empty.notify_all()
+        finally:
+            self.pool_lock.release()
+
+        for sock in socks:
+            sock.close()
+
     def to_string(self):
         out_str = ''
         self.pool_lock.acquire()
@@ -197,6 +219,7 @@ class ConnectManager(object):
 
     def stop(self):
         self.running = False
+        self.new_conn_pool.close()
         suppressed, key_count = self.connect_ssl_log_throttle.flush()
         if suppressed:
             self.logger.warn("connect_ssl final suppressed:%d keys:%d", suppressed, key_count)
@@ -245,6 +268,9 @@ class ConnectManager(object):
             self.logger.debug("_create_more_connection")
         if not self.connecting_more_thread:
             with self.thread_num_lock:
+                # 锁外判断可能已过期，创建前必须在同一所有权边界内复核。
+                if self.connecting_more_thread:
+                    return
                 self.connecting_more_thread = threading.Thread(target=self._create_more_connection_worker,
                                                                name="%s_conn_manager__create_more_conn" % self.logger.name)
                 self.connecting_more_thread.start()
@@ -333,7 +359,12 @@ class ConnectManager(object):
             if not ssl_sock:
                 return None
 
-            self.new_conn_pool.put((ssl_sock.handshake_time, ssl_sock))
+            if not self.running:
+                ssl_sock.close()
+                return None
+
+            if not self.new_conn_pool.put((ssl_sock.handshake_time, ssl_sock)):
+                return None
 
             if self.config.connect_create_interval > 0.1:
                 sleep = random.uniform(self.config.connect_create_interval, self.config.connect_create_interval*2)
@@ -343,20 +374,34 @@ class ConnectManager(object):
         except Exception as e:
             self.logger.exception("connect_process except:%r", e)
 
-    def _connect_ssl(self, ip_str, sni, host, close_cb, queue):
+    def _connect_ssl(self, ip_str, sni, host, close_cb, queue, state=None):
         if self.config.show_state_debug:
             self.logger.debug("_connect_ssl")
 
         try:
             ssl_sock = self.connect_creator.connect_ssl(ip_str, sni, host, close_cb=close_cb)
-            queue.put(ssl_sock)
+            if state is None:
+                queue.put(ssl_sock)
+            else:
+                with state["lock"]:
+                    if state["timed_out"]:
+                        if ssl_sock and hasattr(ssl_sock, "close"):
+                            ssl_sock.close()
+                        return
+                    queue.put(ssl_sock)
         except Exception as e:
+            if state is not None:
+                with state["lock"]:
+                    if state["timed_out"]:
+                        return
+                    queue.put(e)
+            else:
+                queue.put(e)
             allowed, suppressed = self.connect_ssl_log_throttle.allow((ip_str, type(e).__name__))
             if allowed:
                 suffix = " (suppressed %d)" % suppressed if suppressed else ""
                 self.logger.warn("_connect_ssl %s sni:%s host:%s fail:%r%s",
                                  ip_str, sni, host, e, suffix)
-            queue.put(e)
 
     def _create_ssl_connection(self, host_info):
         if self.config.show_state_debug:
@@ -368,12 +413,21 @@ class ConnectManager(object):
 
         try:
             q = Queue()
-            fn_args = (ip_str, sni, host, self.ip_manager.ssl_closed, q)
+            state = {"lock": threading.Lock(), "timed_out": False}
+            fn_args = (ip_str, sni, host, self.ip_manager.ssl_closed, q, state)
             t = threading.Thread(target=self._connect_ssl, args=fn_args, name="connect_ssl_%s" % ip_str)
             t.start()
             try:
                 ssl_sock = q.get(timeout=30)
             except:
+                with state["lock"]:
+                    state["timed_out"] = True
+                    try:
+                        late_result = q.get(timeout=0)
+                    except Exception:
+                        late_result = None
+                    if late_result and hasattr(late_result, "close"):
+                        late_result.close()
                 self.logger.warn("connect_ssl_timeout %s", ip_str)
                 raise socket.error("timeout")
 
