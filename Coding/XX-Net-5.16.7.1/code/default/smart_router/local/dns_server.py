@@ -44,18 +44,32 @@ class DnsServer(object):
         self.backup_port = backup_port
         self.ttl = ttl
         self.th = None
+        self.handlers = set()
+        self.max_handlers = 100
+        self._handler_condition = threading.Condition()
 
     def init_socket(self):
+        self.running = False
         ips = set(self.bind_ip)
         listen_all_v4 = "0.0.0.0" in ips
         listen_all_v6 = "::" in ips
+        listening = False
         for ip in ips:
             if ip not in ("0.0.0.0", "::") and (
                     listen_all_v4 and '.' in ip or
                     listen_all_v6 and ':' in ip):
                 continue
             self.bing_udp_relay(ip)
-            self.bing_listen(ip)
+            if self.bing_listen(ip):
+                listening = True
+
+        if not listening:
+            for sock in self.sockets:
+                sock.close()
+            self.sockets = []
+            self.udp_relay_sock = None
+            raise OSError("DNS server has no listening socket")
+        self.running = True
 
     def bing_listen(self, bind_ip):
         if ":" in bind_ip:
@@ -66,9 +80,8 @@ class DnsServer(object):
         try:
             sock.bind((bind_ip, self.port))
             xlog.info("start DNS server at %s:%d", bind_ip, self.port)
-            self.running = True
             self.sockets.append(sock)
-            return
+            return True
         except:
             xlog.warn("bind DNS %s:%d fail", bind_ip, self.port)
             pass
@@ -76,10 +89,9 @@ class DnsServer(object):
         try:
             sock.bind((bind_ip, self.backup_port))
             xlog.info("start DNS server at %s:%d", bind_ip, self.backup_port)
-            self.running = True
             self.listen_port = self.backup_port
             self.sockets.append(sock)
-            return
+            return True
         except Exception as e:
             xlog.warn("bind DNS %s:%d fail", bind_ip, self.backup_port)
 
@@ -87,6 +99,9 @@ class DnsServer(object):
                 xlog.warn("You can try: install libcap2-bin")
                 xlog.warn("Then: sudo setcap 'cap_net_bind_service=+ep' /usr/bin/python2.7")
                 xlog.warn("Or run as root")
+
+        sock.close()
+        return False
 
     def bing_udp_relay(self, bind_ip):
         if ":" in bind_ip:
@@ -105,6 +120,8 @@ class DnsServer(object):
                 return
             except:
                 xlog.warn("bind UDP %s:%d fail", bind_ip, self.port)
+
+        sock.close()
 
     def dns_query(self, req_data, addr):
         start_time = time.time()
@@ -202,6 +219,31 @@ class DnsServer(object):
         except Exception as e:
             xlog.exception("on_udp_relay data:[%s] except:%r", utils.str2hex(req_data), e)
 
+    def _run_handler(self, target, args):
+        try:
+            target(*args)
+        except Exception as e:
+            xlog.exception("DNS handler except:%r", e)
+        finally:
+            with self._handler_condition:
+                self.handlers.remove(threading.current_thread())
+                self._handler_condition.notify_all()
+
+    def _start_handler(self, target, args, name):
+        with self._handler_condition:
+            if not self.running or len(self.handlers) >= self.max_handlers:
+                return False
+            thread = threading.Thread(target=self._run_handler, args=(target, args), name=name)
+            thread.daemon = True
+            self.handlers.add(thread)
+            try:
+                thread.start()
+            except Exception:
+                self.handlers.remove(thread)
+                self._handler_condition.notify_all()
+                raise
+            return True
+
     def server_forever(self):
         while self.running:
             r, w, e = select.select(self.sockets, [], [], 1)
@@ -216,9 +258,9 @@ class DnsServer(object):
                     break
 
                 if rsock == self.udp_relay_sock:
-                    threading.Thread(target=self.on_udp_relay, args=(rsock, data, addr), name="UDP_relay").start()
+                    self._start_handler(self.on_udp_relay, (rsock, data, addr), "UDP_relay")
                 else:
-                    threading.Thread(target=self.on_udp_query, args=(rsock, data, addr), name="DNSServer_udp_handler").start()
+                    self._start_handler(self.on_udp_query, (rsock, data, addr), "DNSServer_udp_handler")
 
         self.th = None
 
@@ -229,11 +271,24 @@ class DnsServer(object):
 
     def stop(self):
         self.running = False
-        while self.th:
-            time.sleep(1)
+        th = self.th
+        if th and th is not threading.current_thread():
+            th.join()
+        self.th = None
+
+        while True:
+            with self._handler_condition:
+                handlers = list(self.handlers)
+            if not handlers:
+                break
+            for handler in handlers:
+                if handler is not threading.current_thread():
+                    handler.join()
+
         for sock in self.sockets:
             sock.close()
         self.sockets = []
+        self.udp_relay_sock = None
         xlog.info("dns_server stop")
 
 

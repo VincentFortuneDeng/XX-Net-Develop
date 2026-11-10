@@ -4,6 +4,7 @@ import time
 import collections
 
 from . import global_var as g
+from . import metrics
 
 import utils
 from xlog import getLogger
@@ -39,13 +40,19 @@ class DomainRecords(object):
         self.cache = collections.OrderedDict()
         self.last_save_time = time.time()
         self.lock = threading.RLock()
+        self.epoch = 0
         self.last_update_time = 0
         self.need_save = False
         self.load()
 
         self.running = True
 
+    def get_epoch(self):
+        with self.lock:
+            return self.epoch
+
     def _get(self, domain):
+        domain = utils.to_bytes(domain)
         with self.lock:
             try:
                 record = self.cache[domain]
@@ -62,6 +69,7 @@ class DomainRecords(object):
             return record
 
     def _set(self, domain, record):
+        domain = utils.to_bytes(domain)
         with self.lock:
             try:
                 self.cache.pop(domain)
@@ -76,6 +84,7 @@ class DomainRecords(object):
 
     def clean(self):
         with self.lock:
+            self.epoch += 1
             self.cache = collections.OrderedDict()
         self.save(True)
 
@@ -116,17 +125,14 @@ class DomainRecords(object):
 
                     try:
                         lp = line.split()
-                        if len(lp) == 3:
-                            domain = lp[0]
+                        if len(lp) in (3, 5):
+                            domain = utils.to_bytes(lp[0])
                             rule = lp[1]
                             gae_acceptable = int(lp[2])
-                            record = {"r": rule, "ip": {}, "g":gae_acceptable}
-                        elif len(lp) == 5:
-                            domain = lp[0]
-                            rule = lp[1]
-                            gae_acceptable = int(lp[2])
-
-                            record = {"r": rule, "ip":{}, "g":gae_acceptable}
+                            record = {
+                                "r": rule, "dns": {}, "g": gae_acceptable,
+                                "query_count": 0, "update": time.time(),
+                            }
                         else:
                             xlog.warn("rule line:%s fail", line)
                             continue
@@ -152,27 +158,35 @@ class DomainRecords(object):
 
                     fd.write(line + "\n")
 
-        self.last_save_time = time.time()
-        self.need_save = False
+            self.last_save_time = time.time()
+            self.need_save = False
 
-    def set_ips(self, domain, ips, dns_type):
+    def set_ips(self, domain, ips, dns_type, expected_epoch=None):
         if not ips:
             return ips
 
+        rejected = False
         with self.lock:
-            record = self._get(domain)
-
-            if dns_type not in record["dns"]:
-                record["dns"][dns_type] = set(ips)
+            if expected_epoch is not None and expected_epoch != self.epoch:
+                rejected = True
             else:
-                for ip in ips:
-                    if ip in record["dns"][dns_type]:
-                        continue
-                    record["dns"][dns_type].add(ip)
+                record = self._get(domain)
 
-            self._set(domain, record)
+                if dns_type not in record["dns"]:
+                    record["dns"][dns_type] = set(ips)
+                else:
+                    for ip in ips:
+                        if ip in record["dns"][dns_type]:
+                            continue
+                        record["dns"][dns_type].add(ip)
+
+                self._set(domain, record)
+        if rejected:
+            metrics.increment("dns.cache_commit_rejected_total")
+            return ips
 
     def get_ips(self, domain, dns_type=None):
+        domain = utils.to_bytes(domain)
         with self.lock:
             if domain not in self.cache:
                 return []
@@ -324,8 +338,8 @@ class IpRecord(object):
 
                     fd.write("%s %s %d %d\n" % (ip, rule, connect_time, update_time))
 
-        self.last_save_time = time.time()
-        self.need_save = False
+            self.last_save_time = time.time()
+            self.need_save = False
 
     def get_connect_time(self, ip, port=None):
         ip = utils.to_str(ip)

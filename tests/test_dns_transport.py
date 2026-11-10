@@ -5,8 +5,10 @@ import queue
 import socket
 import sys
 import threading
+import time
 import types
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,10 +42,25 @@ smart_route = load_module(
     "smart_router.local.smart_route", APP / "smart_router" / "local" / "smart_route.py")
 simple_http_client = load_module(
     "simple_http_client", NOARCH / "simple_http_client.py")
+from dnslib import CNAME
 
 
-def dns_answer():
-    question = dns_query.DNSRecord(dns_query.DNSHeader(id=7))
+def cname_response(request, aliases):
+    domain = dns_query._normalize_dns_name(request.questions[0].qname)
+    dns_type = request.questions[0].qtype
+    response = dns_query.DNSRecord(dns_query.DNSHeader(id=request.header.id, qr=1))
+    response.add_question(dns_query.DNSQuestion(domain, dns_type))
+    target = aliases.get(domain)
+    if target is None:
+        response.add_answer(dns_query.RR(
+            domain, dns_type, rdata=dns_query.A("192.0.2.8")))
+    else:
+        response.add_answer(dns_query.RR(domain, 5, rdata=CNAME(target)))
+    return response.pack()
+
+
+def dns_answer(query_id=0):
+    question = dns_query.DNSRecord(dns_query.DNSHeader(id=query_id))
     question.add_question(dns_query.DNSQuestion("example.com", dns_query.QTYPE.A))
     answer = question.reply()
     answer.add_answer(dns_query.RR(
@@ -74,6 +91,59 @@ class ScriptedSocket:
         self.close_calls += 1
 
 
+class ResponsiveTcpSocket(ScriptedSocket):
+    """根据真实请求 ID 构造离线 TCP DNS 响应。"""
+    def __init__(self, response_factory=dns_answer, fragment_sizes=None):
+        super().__init__([])
+        self.response_factory = response_factory
+        self.fragment_sizes = fragment_sizes or []
+
+    def sendall(self, data):
+        super().sendall(data)
+        request = dns_query.DNSRecord.parse(data[2:])
+        packet = self.response_factory(request.header.id)
+        framed = len(packet).to_bytes(2, "big") + packet
+        start = 0
+        for size in self.fragment_sizes:
+            self.chunks.append(framed[start:start + size])
+            start += size
+        self.chunks.append(framed[start:])
+
+
+class CnameTcpSocket(ResponsiveTcpSocket):
+    def __init__(self, aliases, barrier=None):
+        super().__init__([])
+        self.aliases = aliases
+        self.barrier = barrier
+
+    def sendall(self, data):
+        ScriptedSocket.sendall(self, data)
+        request = dns_query.DNSRecord.parse(data[2:])
+        packet = cname_response(request, self.aliases)
+        framed = len(packet).to_bytes(2, "big") + packet
+        self.chunks.append(framed)
+        if self.barrier is not None:
+            self.barrier.wait(2)
+
+
+class CnameClient:
+    def __init__(self, aliases, fail_after=20):
+        self.aliases = aliases
+        self.fail_after = fail_after
+        self.calls = 0
+        self.close_calls = 0
+
+    def request(self, *args, **kwargs):
+        self.calls += 1
+        if self.calls > self.fail_after:
+            return None
+        request = dns_query.DNSRecord.parse(kwargs["body"])
+        return types.SimpleNamespace(text=cname_response(request, self.aliases))
+
+    def close(self):
+        self.close_calls += 1
+
+
 class FailingClient:
     def __init__(self):
         self.close_calls = 0
@@ -93,9 +163,7 @@ class DnsTcpTransportTest(unittest.TestCase):
         return query, result
 
     def test_split_length_prefix_is_reassembled(self):
-        packet = dns_answer()
-        framed = len(packet).to_bytes(2, "big") + packet
-        sock = ScriptedSocket([framed[:1], framed[1:5], framed[5:]])
+        sock = ResponsiveTcpSocket(dns_answer, fragment_sizes=[1, 4])
 
         query, result = self.run_query(sock)
 
@@ -155,6 +223,127 @@ class DnsHttpsOwnershipTest(unittest.TestCase):
         self.assertEqual(sock.close_calls, 1)
         self.assertIsNone(client.sock)
 
+    def test_expired_tcp_and_doh_pool_entries_are_closed(self):
+        tcp = dns_query.DnsOverTcpQuery()
+        expired_tcp = ScriptedSocket([])
+        fresh_tcp = ResponsiveTcpSocket()
+        tcp.connections = [[expired_tcp, time.time() - tcp.connection_timeout - 1]]
+        tcp.connect = lambda host, port: fresh_tcp
+
+        self.assertIs(tcp.get_connection(), fresh_tcp)
+        self.assertEqual(expired_tcp.close_calls, 1)
+
+        doh = dns_query.DnsOverHttpsQuery()
+        expired_doh = FailingClient()
+        fresh_doh = FailingClient()
+        doh.connections = [[expired_doh, time.time() - doh.connection_timeout - 1]]
+        dns_query.g.config = types.SimpleNamespace(PROXY_ENABLE=0)
+        with mock.patch.object(dns_query.simple_http_client, "Client", return_value=fresh_doh):
+            self.assertIs(doh.get_connection(), fresh_doh)
+        self.assertEqual(expired_doh.close_calls, 1)
+
+    def test_expired_pool_close_failure_does_not_block_new_connection(self):
+        class CloseFailure(ScriptedSocket):
+            def close(self):
+                self.close_calls += 1
+                raise OSError("controlled close failure")
+
+        tcp = dns_query.DnsOverTcpQuery()
+        expired = CloseFailure([])
+        fresh = ResponsiveTcpSocket()
+        tcp.connections = [[expired, 0]]
+        tcp.connect = lambda host, port: fresh
+
+        self.assertIs(tcp.get_connection(), fresh)
+        self.assertEqual(expired.close_calls, 1)
+
+    def test_tcp_cname_cycle_is_bounded_and_does_not_accumulate_pool(self):
+        aliases = {"a.example": "B.EXAMPLE.", "b.example": "a.example."}
+        sockets = []
+
+        def connect(host, port):
+            if len(sockets) >= 20:
+                raise OSError("recursive query guard")
+            sock = CnameTcpSocket(aliases)
+            sockets.append(sock)
+            return sock
+
+        query = dns_query.DnsOverTcpQuery()
+        query.connect = connect
+
+        self.assertEqual(query.query("a.example"), [])
+        self.assertLessEqual(len(sockets), 16)
+        self.assertEqual(query.connections, [])
+        self.assertTrue(all(sock.close_calls == 1 for sock in sockets))
+
+    def test_doh_cname_cycle_is_bounded_and_does_not_accumulate_pool(self):
+        aliases = {"a.example": "B.EXAMPLE.", "b.example": "a.example."}
+        clients = []
+
+        def get_connection():
+            if len(clients) >= 20:
+                return None
+            client = CnameClient(aliases)
+            clients.append(client)
+            return client
+
+        query = dns_query.DnsOverHttpsQuery()
+        query.get_connection = get_connection
+
+        self.assertEqual(query.query("a.example"), [])
+        self.assertLessEqual(len(clients), 16)
+        self.assertEqual(query.connections, [])
+        self.assertTrue(all(client.close_calls == 1 for client in clients))
+
+    def test_doh_noncycle_cname_succeeds(self):
+        aliases = {"start.example": "alias.example."}
+        client = CnameClient(aliases)
+        query = dns_query.DnsOverHttpsQuery()
+        query.get_connection = lambda: client
+
+        self.assertEqual(query.query("START.EXAMPLE."), [b"192.0.2.8"])
+        self.assertEqual(client.calls, 2)
+
+    def test_parallel_tcp_success_pool_has_capacity_and_stop_closes_all(self):
+        aliases = {"example.com": None}
+        barrier = threading.Barrier(6)
+        sockets = [CnameTcpSocket(aliases, barrier=barrier) for _ in range(6)]
+        connect_lock = threading.Lock()
+        next_socket = [0]
+
+        def connect(host, port):
+            with connect_lock:
+                sock = sockets[next_socket[0]]
+                next_socket[0] += 1
+            return sock
+
+        query = dns_query.DnsOverTcpQuery()
+        query.connect = connect
+        threads = [threading.Thread(target=query.query, args=("example.com", 1))
+                   for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(3)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+
+        self.assertEqual(len(query.connections), 4)
+        query.stop()
+        self.assertEqual(query.connections, [])
+        self.assertTrue(all(sock.close_calls == 1 for sock in sockets))
+
+    def test_doh_stop_closes_every_pooled_client(self):
+        query = dns_query.DnsOverHttpsQuery()
+        clients = [FailingClient(), FailingClient()]
+        query.connections = [[client, time.time()] for client in clients]
+
+        if not hasattr(query, "stop"):
+            self.fail("DoH 连接池缺少 stop 关闭入口")
+        query.stop()
+
+        self.assertEqual(query.connections, [])
+        self.assertEqual([client.close_calls for client in clients], [1, 1])
+
 
 class LocalAndCombinedDnsTest(unittest.TestCase):
     def test_ipv6_udp_response_address_is_accepted(self):
@@ -162,7 +351,10 @@ class LocalAndCombinedDnsTest(unittest.TestCase):
         local.running = True
         result_queue = queue.Queue()
         result_queue.domain = "example.com"
+        result_queue.dns_type = dns_query.QTYPE.A
         local.waiters = {7: result_queue}
+        local.waiters_lock = threading.Lock()
+        local.dns_server = [b"2001:db8::1"]
 
         class UdpSocket:
             def __init__(self):
@@ -172,7 +364,7 @@ class LocalAndCombinedDnsTest(unittest.TestCase):
             def recvfrom(self, size):
                 self.calls += 1
                 if self.calls == 1:
-                    return dns_answer(), ("2001:db8::1", 53, 0, 0)
+                    return dns_answer(query_id=7), ("2001:db8::1", 53, 0, 0)
                 local.running = False
                 raise OSError("结束接收线程")
 
@@ -189,6 +381,7 @@ class LocalAndCombinedDnsTest(unittest.TestCase):
         local = dns_query.LocalDnsQuery.__new__(dns_query.LocalDnsQuery)
         local.timeout = 3
         local.waiters = {}
+        local.waiters_lock = threading.Lock()
         local.dns_server = []
         local.ns_backoff = {}
         local.ns_backoff_lock = threading.Lock()
@@ -207,7 +400,51 @@ class LocalAndCombinedDnsTest(unittest.TestCase):
             dns_query.Queue = original_queue
 
         self.assertEqual(result, [])
-        self.assertEqual(observed_timeouts, [0.125])
+        self.assertEqual(len(observed_timeouts), 1)
+        self.assertGreater(observed_timeouts[0], 0)
+        self.assertLessEqual(observed_timeouts[0], 0.125)
+
+    def test_local_udp_cname_cycle_is_bounded_and_alias_chain_still_works(self):
+        local = dns_query.LocalDnsQuery.__new__(dns_query.LocalDnsQuery)
+        local.waiters = {}
+        local.waiters_lock = threading.Lock()
+        local.dns_server = []
+        local.ns_backoff = {}
+        local.ns_backoff_lock = threading.Lock()
+        calls = []
+
+        class AliasQueue:
+            def __init__(self):
+                self.domain = None
+
+            def get(self, timeout):
+                domain = dns_query._normalize_dns_name(self.domain)
+                calls.append(domain)
+                if domain == "a.example":
+                    return dns_query._DnsAlias("b.example.")
+                if domain == "b.example":
+                    if cycle:
+                        return dns_query._DnsAlias("A.EXAMPLE.")
+                    return [b"192.0.2.8"]
+                raise AssertionError("unexpected alias target")
+
+        original_queue = dns_query.Queue
+        dns_query.Queue = AliasQueue
+        try:
+            cycle = False
+            self.assertEqual(local.query("a.example"), [b"192.0.2.8"])
+            self.assertEqual(calls, ["a.example", "b.example"])
+
+            calls[:] = []
+            cycle = True
+            try:
+                result = local.query("a.example")
+            except RecursionError:
+                self.fail("UDP CNAME 环必须由共享历史上限终止，而不是耗尽 Python 递归栈")
+            self.assertEqual(result, [])
+            self.assertLessEqual(len(calls), 16)
+        finally:
+            dns_query.Queue = original_queue
 
     def test_fallbacks_preserve_aaaa_query_type(self):
         class LocalRecorder:
@@ -222,7 +459,10 @@ class LocalAndCombinedDnsTest(unittest.TestCase):
             def get_ips(self, domain, dns_type):
                 return []
 
-            def set_ips(self, domain, ips, dns_type):
+            def get_epoch(self):
+                return 0
+
+            def set_ips(self, domain, ips, dns_type, expected_epoch=None):
                 pass
 
         original_g = dns_query.g

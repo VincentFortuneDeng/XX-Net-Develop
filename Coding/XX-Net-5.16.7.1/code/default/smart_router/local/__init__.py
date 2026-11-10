@@ -115,6 +115,8 @@ def start(args):
         g.x_tunnel = proc_handler["x_tunnel"]["imp"].local
         g.x_tunnel_socks_port = g.x_tunnel.global_var.config.socks_port
     else:
+        g.x_tunnel = None
+        g.x_tunnel_socks_port = None
         xlog.debug("x_tunnel not running")
 
     load_config()
@@ -186,13 +188,20 @@ def start(args):
 def stop():
     global ready
 
-    g.domain_cache.save(True)
-    g.ip_cache.save(True)
+    if g.connect_manager:
+        g.connect_manager.stop()
+    if g.pipe_socks:
+        g.pipe_socks.stop()
+    if g.dns_query:
+        g.dns_query.stop()
 
-    g.connect_manager.stop()
-    g.pipe_socks.stop()
-    g.dns_query.stop()
-
-    g.dns_srv.stop()
-    g.proxy_server.shutdown()
+    if g.dns_srv:
+        g.dns_srv.stop()
+    if g.proxy_server:
+        g.proxy_server.shutdown()
     ready = False
+
+    if g.domain_cache:
+        g.domain_cache.save(True)
+    if g.ip_cache:
+        g.ip_cache.save(True)

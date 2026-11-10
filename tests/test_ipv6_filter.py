@@ -6,7 +6,8 @@ import sys
 import time
 import types
 
-BASE = "/Applications/XX-Net/code/default"
+BASE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "Coding", "XX-Net-5.16.7.1", "code", "default")
 NOARCH = os.path.join(BASE, "lib", "noarch")
 if NOARCH not in sys.path:
     sys.path.insert(0, NOARCH)
@@ -56,6 +57,10 @@ def main():
     # 再加载 seley（相对导入 ..tls_relay_front.ip_manager 复用上面模块）
     seley = load_mod("x_tunnel.local.seley_front.ip_manager",
                      os.path.join(BASE, "x_tunnel", "local", "seley_front", "ip_manager.py"))
+    expected_base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                 "Coding", "XX-Net-5.16.7.1", "code", "default")
+    assert os.path.realpath(tls.__file__).startswith(os.path.realpath(expected_base) + os.sep), tls.__file__
+    assert os.path.realpath(seley.__file__).startswith(os.path.realpath(expected_base) + os.sep), seley.__file__
 
     # ---- B4：ipv6_available 探测语义（fake socket 注入）----
     real_socket = tls.socket.socket

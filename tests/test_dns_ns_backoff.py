@@ -60,6 +60,9 @@ class FakeTime(object):
     def time(self):
         return self.now
 
+    def monotonic(self):
+        return self.now
+
 
 class FakeUdpSocket(object):
     def __init__(self, error=None):
@@ -95,6 +98,7 @@ def make_query(error=None):
     inst = dq.LocalDnsQuery.__new__(dq.LocalDnsQuery)
     inst.timeout = 0.01
     inst.waiters = {}
+    inst.waiters_lock = threading.Lock()
     inst.dns_server = [S1, S2]
     inst.sock = FakeUdpSocket(error)
     inst.sock6 = FakeUdpSocket(error)

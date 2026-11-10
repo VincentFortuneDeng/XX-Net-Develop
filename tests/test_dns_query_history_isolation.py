@@ -38,6 +38,15 @@ SPEC.loader.exec_module(dns_module)
 
 
 class Cache:
+    def __init__(self):
+        self.epoch = 0
+
+    def get_epoch(self):
+        return self.epoch
+
+    def clean(self):
+        self.epoch += 1
+
     def get_ips(self, domain, dns_type):
         return []
 
@@ -74,7 +83,10 @@ class LateParallelResultTest(unittest.TestCase):
             def __init__(self):
                 self.writes = []
 
-            def set_ips(self, domain, ips, dns_type):
+            def get_epoch(self):
+                return 0
+
+            def set_ips(self, domain, ips, dns_type, expected_epoch=None):
                 self.writes.append((domain, list(ips), dns_type))
 
         cache = RecordingCache()
@@ -104,7 +116,10 @@ class LateParallelResultTest(unittest.TestCase):
             def __init__(self):
                 self.writes = []
 
-            def set_ips(self, domain, ips, dns_type):
+            def get_epoch(self):
+                return 0
+
+            def set_ips(self, domain, ips, dns_type, expected_epoch=None):
                 self.writes.append((domain, list(ips), dns_type))
 
         class FastTimeoutQueue(queue.Queue):
@@ -136,6 +151,141 @@ class LateParallelResultTest(unittest.TestCase):
         self.assertEqual(second, [b"192.0.2.2"])
         self.assertEqual(first_results, [[b"192.0.2.1"]])
         self.assertEqual(cache.writes, [(b"shared.example", [b"192.0.2.2"], 1)])
+
+    def test_replaced_cache_instance_rejects_late_parallel_write(self):
+        class RecordingCache:
+            def __init__(self):
+                self.writes = []
+
+            def get_epoch(self):
+                return 0
+
+            def set_ips(self, domain, ips, dns_type, expected_epoch=None):
+                self.writes.append((domain, list(ips), dns_type))
+
+        old_cache = RecordingCache()
+        new_cache = RecordingCache()
+        global_var.domain_cache = old_cache
+        parallel = dns_module.ParallelQuery()
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow(domain, dns_type):
+            started.set()
+            release.wait(1)
+            return [b"192.0.2.1"]
+
+        worker = threading.Thread(target=parallel.query, args=(b"replace.example", 1, [slow]))
+        worker.start()
+        self.assertTrue(started.wait(1))
+        global_var.domain_cache = new_cache
+        release.set()
+        worker.join(2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(old_cache.writes, [])
+        self.assertEqual(new_cache.writes, [])
+
+    def test_clean_invalidates_old_parallel_worker_but_allows_new_write(self):
+        class EpochCache(Cache):
+            def __init__(self):
+                super().__init__()
+                self.writes = []
+
+            def set_ips(self, domain, ips, dns_type, expected_epoch=None):
+                if expected_epoch is not None and expected_epoch != self.epoch:
+                    return
+                self.writes.append((domain, list(ips), dns_type))
+
+        cache = EpochCache()
+        global_var.domain_cache = cache
+        parallel = dns_module.ParallelQuery()
+        started = threading.Event()
+        release = threading.Event()
+
+        def old_worker(domain, dns_type):
+            started.set()
+            release.wait(1)
+            return [b"192.0.2.1"]
+
+        old = threading.Thread(target=parallel.query, args=(b"clean.example", 1, [old_worker]))
+        old.start()
+        self.assertTrue(started.wait(1))
+        cache.clean()
+        release.set()
+        old.join(2)
+        self.assertFalse(old.is_alive())
+        self.assertEqual(cache.writes, [])
+
+        parallel.query(b"clean.example", 1, [lambda domain, dns_type: [b"192.0.2.2"]])
+        self.assertEqual(cache.writes, [(b"clean.example", [b"192.0.2.2"], 1)])
+
+    def test_clean_invalidates_old_direct_query_write(self):
+        query = dns_module.CombineDnsQuery.__new__(dns_module.CombineDnsQuery)
+        query.domain_allowed_pattern = re.compile(br"(?!-)[A-Z\d-]{1,63}(?<!-)$")
+        query.local_dns_resolve = LocalResolver({})
+        global_var.user_rules = Rules()
+        global_var.gfwlist = GfwList()
+        global_var.config = types.SimpleNamespace(pac_policy="normal")
+        global_var.domain_cache = Cache()
+        cache = query_cache = global_var.domain_cache
+        cache.writes = []
+        cache.set_ips = lambda domain, ips, dns_type, expected_epoch=None: (
+            cache.writes.append((domain, list(ips), dns_type))
+            if expected_epoch is None or expected_epoch == cache.epoch else None)
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_query(domain, dns_type=1, timeout=3):
+            started.set()
+            release.wait(1)
+            return [b"192.0.2.3"]
+
+        query.local_dns_resolve.query = slow_query
+        worker = threading.Thread(target=query.query, args=(b"localhost", 1))
+        worker.start()
+        self.assertTrue(started.wait(1))
+        query_cache.clean()
+        release.set()
+        worker.join(2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(cache.writes, [])
+
+    def test_replaced_cache_instance_rejects_late_direct_write(self):
+        query = dns_module.CombineDnsQuery.__new__(dns_module.CombineDnsQuery)
+        query.domain_allowed_pattern = re.compile(br"(?!-)[A-Z\d-]{1,63}(?<!-)$")
+        global_var.user_rules = Rules()
+        global_var.gfwlist = GfwList()
+        global_var.config = types.SimpleNamespace(pac_policy="normal")
+        old_cache = Cache()
+        new_cache = Cache()
+        old_cache.writes = []
+        new_cache.writes = []
+        old_cache.set_ips = lambda domain, ips, dns_type, expected_epoch=None: old_cache.writes.append(
+            (domain, list(ips), dns_type))
+        new_cache.set_ips = lambda domain, ips, dns_type, expected_epoch=None: new_cache.writes.append(
+            (domain, list(ips), dns_type))
+        global_var.domain_cache = old_cache
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_query(domain, dns_type=1, timeout=3):
+            started.set()
+            release.wait(1)
+            return [b"192.0.2.3"]
+
+        query.local_dns_resolve = types.SimpleNamespace(query=slow_query)
+        worker = threading.Thread(target=query.query, args=(b"localhost", 1))
+        worker.start()
+        self.assertTrue(started.wait(1))
+        global_var.domain_cache = new_cache
+        release.set()
+        worker.join(2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(old_cache.writes, [])
+        self.assertEqual(new_cache.writes, [])
 
 
 class DnsQueryHistoryIsolationTest(unittest.TestCase):

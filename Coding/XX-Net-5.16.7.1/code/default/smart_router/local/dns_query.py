@@ -26,17 +26,76 @@ sys.path.append(noarch_lib)
 import env_info
 data_path = os.path.join(env_info.data_path, 'smart_router')
 
-from queue import Queue
+from queue import Queue, Empty
 import lru_cache
 import utils
 import simple_http_client
 from dnslib import DNSRecord, DNSHeader, A, AAAA, RR, DNSQuestion, QTYPE
 
 from . import global_var as g
+from . import metrics
 
 from xlog import getLogger
 xlog = getLogger("smart_router")
 
+
+def _normalize_dns_name(name):
+    return utils.to_str(name).rstrip(".").lower()
+
+
+def _match_dns_response(response, query_id, domain, dns_type):
+    if not response.header.qr or response.header.id != query_id:
+        return False
+    if len(response.questions) != 1:
+        return False
+
+    question = response.questions[0]
+    return (_normalize_dns_name(question.qname) == _normalize_dns_name(domain) and
+            question.qtype == dns_type)
+
+
+class _DnsAlias:
+    def __init__(self, target):
+        self.target = target
+
+
+def _parse_response_ips(response, domain, dns_type):
+    qname = _normalize_dns_name(domain)
+    valid_owners = {qname}
+    cname_by_owner = {}
+    for record in response.rr:
+        if record.rtype == QTYPE.CNAME:
+            cname_by_owner[_normalize_dns_name(record.rname)] = utils.to_bytes(str(record.rdata))
+
+    alias = None
+    current = qname
+    seen = set()
+    while current in cname_by_owner and current not in seen:
+        seen.add(current)
+        alias = cname_by_owner[current]
+        current = _normalize_dns_name(alias)
+        valid_owners.add(current)
+    if current in seen:
+        alias = None
+
+    ips = []
+    for record in response.rr:
+        if record.rtype != dns_type or _normalize_dns_name(record.rname) not in valid_owners:
+            continue
+        value = utils.to_bytes(str(record.rdata))
+        if dns_type in (QTYPE.A, QTYPE.AAAA, QTYPE.NS) or utils.check_ip_valid(value):
+            ips.append(value)
+
+    return ips, alias
+
+
+def _extract_response_ips(response, domain, dns_type, recursive_query):
+    ips, alias = _parse_response_ips(response, domain, dns_type)
+    if ips or alias is None:
+        return ips
+
+    # TCP/DoH 在各自调用线程跟随别名；UDP 接收线程只交付 _DnsAlias。
+    return recursive_query(alias, dns_type)
 
 def get_local_ips():
     def get_ip_address(NICname):
@@ -124,6 +183,10 @@ def query_dns_from_xxnet(domain, dns_type=None):
         ips_out = []
         for ip_cn in ips:
             ip, cn = ip_cn.split("|")
+            if dns_type == QTYPE.A and not utils.check_ip_valid4(ip):
+                continue
+            if dns_type == QTYPE.AAAA and not utils.check_ip_valid6(ip):
+                continue
             ips_out.append(ip)
         return ips_out
     except Exception as e:
@@ -134,7 +197,8 @@ def query_dns_from_xxnet(domain, dns_type=None):
 class LocalDnsQuery():
     def __init__(self, timeout=3):
         self.timeout = timeout
-        self.waiters = lru_cache.LruCache(100)
+        self.waiters = {}
+        self.waiters_lock = threading.Lock()
         self.dns_server = self.get_local_dns_server()
         self.ns_backoff = {}
         self.ns_backoff_lock = threading.Lock()
@@ -251,6 +315,9 @@ class LocalDnsQuery():
 
                 if not response:
                     continue
+                if port != 53 or utils.to_bytes(server) not in [utils.to_bytes(ip) for ip in self.dns_server]:
+                    xlog.warn("ignore DNS response from unconfigured source:%s port:%s", server, port)
+                    continue
 
                 try:
                     p = DNSRecord.parse(response)
@@ -258,26 +325,34 @@ class LocalDnsQuery():
                     xlog.exception("dns client parse response fail:%r", e)
                     continue
 
-                if len(p.questions) == 0:
-                    xlog.warn("received response without question")
-                    continue
-
                 id = p.header.id
-
-                if id not in self.waiters:
+                with self.waiters_lock:
+                    que = self.waiters.get(id)
+                if que is None:
                     continue
 
-                que = self.waiters[id]
                 org_domain = que.domain
+                dns_type = que.dns_type
+                if not _match_dns_response(p, id, org_domain, dns_type):
+                    xlog.warn("received unmatched DNS response from:%s", server)
+                    continue
+
                 domain = str(p.questions[0].qname)
                 xlog.debug("DNS local query received %s from:%s domain:%s org:%s", len(p.rr), server, domain, org_domain)
-                ips = []
-                for r in p.rr:
-                    ip = utils.to_bytes(str(r.rdata))
-                    ips.append(ip)
-
+                ips, alias = _parse_response_ips(p, org_domain, dns_type)
                 if ips:
-                    que.put(ips)
+                    result = ips
+                elif alias is not None:
+                    result = _DnsAlias(alias)
+                else:
+                    continue
+
+                # 只有仍持有该 waiter 的接收线程才能交付并消费这次查询。
+                with self.waiters_lock:
+                    if self.waiters.get(id) is not que:
+                        continue
+                    del self.waiters[id]
+                que.put(result)
             except Exception as e:
                 xlog.exception("dns recv_worker except:%r", e)
 
@@ -320,9 +395,12 @@ class LocalDnsQuery():
         ips = []
         try:
             t0 = time.time()
-            ip = socket.gethostbyname(domain)
+            family = socket.AF_INET6 if dns_type == QTYPE.AAAA else socket.AF_INET
+            addresses = socket.getaddrinfo(domain, None, family, socket.SOCK_STREAM)
+            check_ip = utils.check_ip_valid6 if family == socket.AF_INET6 else utils.check_ip_valid4
+            ips = list(dict.fromkeys(address[4][0] for address in addresses
+                                     if check_ip(address[4][0])))
             t1 = time.time()
-            ips.append(ip)
 
             xlog.debug("query_by_system, %s %d cost:%f, return:%s", domain, dns_type, t1 - t0, ips)
         except Exception as e:
@@ -330,19 +408,30 @@ class LocalDnsQuery():
 
         return ips
 
-    def query(self, domain, dns_type=1, timeout=3):
+    def query(self, domain, dns_type=1, timeout=3, history=None):
+        normalized_domain = _normalize_dns_name(domain)
+        if history is None:
+            history = set()
+        if normalized_domain in history or len(history) >= 16:
+            return []
+        history.add(normalized_domain)
+
         if sys.platform == "ios":
             return self.query_by_system(domain, dns_type)
 
-        t0 = time.time()
+        t0 = time.monotonic()
         end_time = t0 + timeout
-        while True:
-            id = random.randint(0, 65535)
-            if id not in self.waiters:
-                break
-
         que = Queue()
         que.domain = domain
+        que.dns_type = dns_type
+
+        # 16 位 ID 的占用检查和登记必须原子完成。
+        with self.waiters_lock:
+            while True:
+                id = random.randint(0, 65535)
+                if id not in self.waiters:
+                    self.waiters[id] = que
+                    break
 
         now = time.time()
         candidates = []
@@ -360,25 +449,36 @@ class LocalDnsQuery():
             candidates = [min(cooled_servers, key=lambda item: item[1])[0]]
 
         for server_ip in candidates:
-            new_time = time.time()
+            new_time = time.monotonic()
             if new_time > end_time:
                 break
 
-            self.waiters[id] = que
             self.send_request(id, server_ip, domain, dns_type)
 
         try:
-            ips = que.get(timeout=timeout)
+            ips = que.get(timeout=max(0, end_time - time.monotonic()))
+        except Empty:
+            metrics.mark_timeout()
+            ips = []
         except:
             ips = []
+        finally:
+            with self.waiters_lock:
+                if self.waiters.get(id) is que:
+                    del self.waiters[id]
+
+        if isinstance(ips, _DnsAlias):
+            remaining = max(0, end_time - time.monotonic())
+            if remaining <= 0:
+                ips = []
+            else:
+                # 接收线程只交付别名事件，递归查询由原调用线程使用剩余预算执行。
+                ips = self.query(ips.target, dns_type, remaining, history=history)
 
         if ips:
             ips = list(set(ips))
 
-        if id in self.waiters:
-            del self.waiters[id]
-
-        t1 = time.time()
+        t1 = time.monotonic()
         xlog.debug("query by udp, %s cost:%f, return:%s", domain, t1-t0, ips)
 
         return ips
@@ -392,6 +492,9 @@ class DnsOverTcpQuery():
         self.public_list = server_list
         self.port = port
         self.connections = []
+        self.max_connections = 4
+        self.running = True
+        self.connections_lock = threading.Lock()
 
     def get_server(self):
         return random.choice(self.public_list)
@@ -474,12 +577,19 @@ class DnsOverTcpQuery():
         return sock
 
     def get_connection(self):
-        while len(self.connections):
+        while True:
+            with self.connections_lock:
+                if not self.running:
+                    return None
+                if not self.connections:
+                    break
+                sock, last_query_time = self.connections.pop()
+
+            if time.time() - last_query_time < self.connection_timeout:
+                return sock
             try:
-                [sock, last_query_time] = self.connections.pop()
-                if time.time() - last_query_time < self.connection_timeout:
-                    return sock
-            except:
+                sock.close()
+            except Exception:
                 pass
 
         server_ip = self.get_server()
@@ -487,9 +597,44 @@ class DnsOverTcpQuery():
             return None
 
         sock = self.connect(server_ip, self.port)
+        if sock is not None:
+            with self.connections_lock:
+                if not self.running:
+                    sock.close()
+                    return None
         return sock
 
-    def query(self, domain, dns_type=1):
+    def return_connection(self, sock):
+        with self.connections_lock:
+            if self.running and len(self.connections) < self.max_connections:
+                self.connections.append([sock, time.time()])
+                return
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+    def stop(self):
+        with self.connections_lock:
+            self.running = False
+            connections = self.connections
+            self.connections = []
+        for sock, last_query_time in connections:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    def query(self, domain, dns_type=1, history=None):
+        if history is None:
+            history = set()
+        elif not isinstance(history, set):
+            history = set(_normalize_dns_name(name) for name in history)
+        normalized_domain = _normalize_dns_name(domain)
+        if normalized_domain in history or len(history) >= 16:
+            return []
+        history.add(normalized_domain)
+
         t0 = time.time()
         sock = None
         return_connection = False
@@ -523,24 +668,21 @@ class DnsOverTcpQuery():
             t2 = time.time()
 
             p = DNSRecord.parse(response[2:length + 2])
+            if not _match_dns_response(p, d.header.id, domain, dns_type):
+                raise ValueError("unmatched DNS TCP response")
             if len(p.rr) == 0:
                 xlog.warn("query_over_tcp for %s type:%d return none, cost:%f", domain, dns_type, t2-t0)
 
-            ips = []
-            for r in p.rr:
-                ip = utils.to_bytes(str(r.rdata))
-                if not utils.check_ip_valid(ip) and dns_type != 2:
-                    if ip == domain:
-                        continue
-
-                    ip_ips = self.query(ip, dns_type)
-                    ips += ip_ips
-                else:
-                    ips.append(ip)
+            unused_ips, alias = _parse_response_ips(p, domain, dns_type)
+            ips = _extract_response_ips(
+                p, domain, dns_type,
+                lambda alias_domain, query_type: self.query(
+                    alias_domain, query_type, history=history))
 
             xlog.debug("DNS %s %s return %s t:%f", self.protocol, domain, ips, t2-t0)
-            return_connection = True
-            self.connections.append([sock, time.time()])
+            if ips or alias is None:
+                return_connection = True
+                self.return_connection(sock)
             return ips
         except socket.timeout:
             xlog.warn("query_over_tcp %s type:%s timeout", domain, dns_type)
@@ -613,18 +755,28 @@ class DnsOverHttpsQuery(object):
         ]
         self.connection_timeout = 60
         self.connections = []
+        self.max_connections = 4
+        self.running = True
+        self.connections_lock = threading.Lock()
 
     def get_connection(self):
-        while len(self.connections):
+        while True:
+            with self.connections_lock:
+                if not self.running:
+                    return None
+                if not self.connections:
+                    break
+                client, last_query_time = self.connections.pop()
+
+            if time.time() - last_query_time < self.connection_timeout:
+                return client
             try:
-                [client, last_query_time] = self.connections.pop()
-                if time.time() - last_query_time < self.connection_timeout:
-                    return client
-            except:
+                client.close()
+            except Exception:
                 pass
 
         if g.config.PROXY_ENABLE == 1:
-            return simple_http_client.Client(proxy={
+            client = simple_http_client.Client(proxy={
                 "type": g.config.PROXY_TYPE,
                 "host": g.config.PROXY_HOST,
                 "port": g.config.PROXY_PORT,
@@ -632,7 +784,37 @@ class DnsOverHttpsQuery(object):
                 "pass": g.config.PROXY_PASSWD,
             }, timeout=self.timeout)
         else:
-            return simple_http_client.Client(timeout=self.timeout)
+            client = simple_http_client.Client(timeout=self.timeout)
+
+        with self.connections_lock:
+            if not self.running:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+                return None
+        return client
+
+    def return_connection(self, client):
+        with self.connections_lock:
+            if self.running and len(self.connections) < self.max_connections:
+                self.connections.append([client, time.time()])
+                return
+        try:
+            client.close()
+        except Exception:
+            pass
+
+    def stop(self):
+        with self.connections_lock:
+            self.running = False
+            connections = self.connections
+            self.connections = []
+        for client, last_query_time in connections:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     @property
     def server(self):
@@ -660,7 +842,7 @@ class DnsOverHttpsQuery(object):
                 ips.append(answer["data"])
 
             return_connection = True
-            self.connections.append([client, time.time()])
+            self.return_connection(client)
 
             xlog.debug("DNS server:%s query:%s return %s t:%f", self.server, domain, ips, t2 - t0)
             return ips
@@ -674,7 +856,16 @@ class DnsOverHttpsQuery(object):
                 except Exception:
                     pass
 
-    def query(self, domain, dns_type=1, url=None):
+    def query(self, domain, dns_type=1, url=None, history=None):
+        if history is None:
+            history = set()
+        elif not isinstance(history, set):
+            history = set(_normalize_dns_name(name) for name in history)
+        normalized_domain = _normalize_dns_name(domain)
+        if normalized_domain in history or len(history) >= 16:
+            return []
+        history.add(normalized_domain)
+
         t0 = time.time()
         client = None
         return_connection = False
@@ -699,20 +890,18 @@ class DnsOverHttpsQuery(object):
                 return ips
 
             p = DNSRecord.parse(r.text)
+            if not _match_dns_response(p, d.header.id, domain, dns_type):
+                raise ValueError("unmatched DNS HTTPS response")
 
-            return_connection = True
-            self.connections.append([client, time.time()])
+            unused_ips, alias = _parse_response_ips(p, domain, dns_type)
+            ips = _extract_response_ips(
+                p, domain, dns_type,
+                lambda alias_domain, query_type: self.query(
+                    alias_domain, query_type, history=history))
 
-            for r in p.rr:
-                ip = utils.to_bytes(str(r.rdata))
-                if not utils.check_ip_valid(ip):
-                    if ip == domain:
-                        continue
-
-                    ip_ips = self.query(ip, dns_type)
-                    ips += ip_ips
-                else:
-                    ips.append(ip)
+            if ips or alias is None:
+                return_connection = True
+                self.return_connection(client)
 
             xlog.debug("DNS %s %s return %s t:%f", self.protocol, domain, ips, t2 - t0)
             return ips
@@ -739,9 +928,18 @@ class ParallelQuery():
             ips = function(task.domain, task.dns_type)
             if len(ips):
                 task.put(ips)
+            rejected = None
             with self.generation_lock:
-                if self.generations.get((task.domain, task.dns_type)) == task.generation and len(ips):
-                    g.domain_cache.set_ips(task.domain, ips, task.dns_type)
+                current = self.generations.get((task.domain, task.dns_type)) == task.generation
+                same_cache = g.domain_cache is task.domain_cache
+                if current and len(ips) and same_cache:
+                    task.domain_cache.set_ips(
+                        task.domain, ips, task.dns_type, expected_epoch=task.cache_epoch)
+                elif len(ips):
+                    rejected = "dns.generation_drops_total" if not current else \
+                        "dns.cache_commit_rejected_total"
+            if rejected:
+                metrics.increment(rejected)
         finally:
             with self.generation_lock:
                 task.pending -= 1
@@ -757,6 +955,8 @@ class ParallelQuery():
         key = (domain, dns_type)
         with self.generation_lock:
             task.generation = self.generations.get(key, 0) + 1
+            task.domain_cache = g.domain_cache
+            task.cache_epoch = task.domain_cache.get_epoch()
             self.generations[key] = task.generation
 
         for func in funcs:
@@ -764,6 +964,9 @@ class ParallelQuery():
 
         try:
             ips = task.get(timeout=5)
+        except Empty:
+            metrics.mark_timeout()
+            ips = []
         except:
             ips = []
 
@@ -810,6 +1013,16 @@ class CombineDnsQuery():
         ])
 
     def query(self, domain, dns_type=1, history=None):
+        token = metrics.begin_query()
+        started = time.monotonic()
+        ips = []
+        try:
+            ips = self._query(domain, dns_type, history)
+            return ips
+        finally:
+            metrics.finish_query(token, ips, time.monotonic() - started)
+
+    def _query(self, domain, dns_type=1, history=None):
         if history is None:
             history = []
 
@@ -833,8 +1046,11 @@ class CombineDnsQuery():
             return ips
 
         elif b"." not in domain or g.gfwlist.in_white_list(domain) or rule in ["direct"] or g.config.pac_policy == "all_Direct":
+            domain_cache = g.domain_cache
+            cache_epoch = domain_cache.get_epoch()
             ips = self.local_dns_resolve.query(domain, dns_type, timeout=1)
-            g.domain_cache.set_ips(domain, ips, dns_type)
+            if g.domain_cache is domain_cache:
+                domain_cache.set_ips(domain, ips, dns_type, expected_epoch=cache_epoch)
             return ips
 
         elif g.gfwlist.in_block_list(domain) or rule in ["gae", "socks"] or g.config.pac_policy == "all_X-Tunnel":
@@ -886,3 +1102,6 @@ class CombineDnsQuery():
 
     def stop(self):
         self.local_dns_resolve.stop()
+        self.tcp_query.stop()
+        self.tls_query.stop()
+        self.https_query.stop()

@@ -18,7 +18,8 @@ import sys
 import types
 from unittest.mock import mock_open, patch
 
-BASE = "/Applications/XX-Net/code/default"
+BASE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "Coding", "XX-Net-5.16.7.1", "code", "default")
 NOARCH = os.path.join(BASE, "lib", "noarch")
 if NOARCH not in sys.path:
     sys.path.insert(0, NOARCH)
