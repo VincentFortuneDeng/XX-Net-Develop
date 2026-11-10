@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="color-scheme" content="light dark">
+    <title>XX-Net 运行证据台</title>
+    <link rel="stylesheet" href="css/dashboard.css">
+    <script src="js/dashboard.js" defer></script>
+</head>
+<body>
+    <a class="skip-link" href="#overview">跳到运行总览</a>
+    <header class="topbar">
+        <div>
+            <p class="product-name">XX-Net</p>
+            <h1>运行证据台</h1>
+            <p class="lede">把用户结果、跨层压力和证据缺口放在同一时间轴上。此页面只读，不改变代理或系统设置。</p>
+        </div>
+        <div class="collection-control" aria-label="采样控制">
+            <p id="collection-status" class="status-badge" data-status="unknown" role="status" aria-live="polite">等待首个运行快照</p>
+            <p id="observation-window" class="window-label">实际观察窗口：NO_SAMPLE</p>
+            <div class="button-row">
+                <button id="toggle-polling" type="button">暂停采样</button>
+                <button id="reset-observation" type="button" class="button-secondary">重新开始观察</button>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <section id="overview" class="region region-overview" aria-labelledby="overview-title">
+            <div class="section-heading">
+                <h2 id="overview-title">总览</h2>
+                <p>成功率只来自完整探针；运行快照只说明采集是否可用，两者不互相替代。</p>
+            </div>
+            <div class="overview-grid">
+                <article class="primary-result">
+                    <h3>完整探针成功率</h3>
+                    <p id="probe-success" class="hero-value">NO_SAMPLE</p>
+                    <p id="probe-attempts">尚未导入当前进程代际的探针结果</p>
+                </article>
+                <article class="overview-fact">
+                    <h3>采样健康</h3>
+                    <p id="sample-health" class="fact-value">NO_SAMPLE</p>
+                    <p id="sample-detail">没有有效样本</p>
+                </article>
+                <article class="overview-fact">
+                    <h3>进程代际</h3>
+                    <p id="generation-state" class="fact-value generation-value">unknown</p>
+                    <p>换代后重新建立累计计数基线</p>
+                </article>
+                <article class="overview-fact">
+                    <h3>模块状态</h3>
+                    <p id="module-state" class="fact-value">unknown</p>
+                    <p id="module-detail">GAE、Smart Router、X-Tunnel</p>
+                </article>
+            </div>
+        </section>
+
+        <section id="user-journey" class="region" aria-labelledby="journey-title">
+            <div class="section-heading">
+                <h2 id="journey-title">用户链路</h2>
+                <p>导入本地固定探针结果，核对完整字节与失败分类；不会从页面发起网络探测。</p>
+            </div>
+            <div class="import-row">
+                <label for="probe-file">导入当前代际的探针 JSON</label>
+                <input id="probe-file" type="file" accept=".json,application/json">
+                <p id="probe-import-status" role="status" aria-live="polite">未导入探针</p>
+            </div>
+            <div class="table-scroll">
+                <table>
+                    <caption>固定探针结果</caption>
+                    <thead><tr><th scope="col">类别</th><th scope="col">状态</th><th scope="col">尝试</th><th scope="col">完整成功</th><th scope="col">单次预期字节</th><th scope="col">最小实收字节</th><th scope="col">时延</th></tr></thead>
+                    <tbody id="probe-table-body"><tr><td colspan="7">NO_SAMPLE</td></tr></tbody>
+                </table>
+            </div>
+            <dl class="failure-summary" aria-label="探针失败分类">
+                <div><dt>超时</dt><dd id="failure-timeout">0</dd></div>
+                <div><dt>截断</dt><dd id="failure-truncated">0</dd></div>
+                <div><dt>连接</dt><dd id="failure-connection">0</dd></div>
+                <div><dt>HTTP 状态</dt><dd id="failure-http_status">0</dd></div>
+                <div><dt>内容不符</dt><dd id="failure-content_mismatch">0</dd></div>
+                <div><dt>其他</dt><dd id="failure-other">0</dd></div>
+            </dl>
+        </section>
+
+        <section id="cross-layer" class="region" aria-labelledby="cross-layer-title">
+            <div class="section-heading">
+                <h2 id="cross-layer-title">跨层压力</h2>
+                <p>同一代际内比较队列占用与事件增量。任一模块状态改变都会断开曲线，而不是拼接计数。</p>
+            </div>
+            <div class="chart-grid">
+                <article class="chart-card">
+                    <h3>X-Tunnel 乱序队列占用</h3>
+                    <div class="chart-legend" id="queue-legend" aria-label="队列图例"></div>
+                    <div class="chart-plot" id="queue-chart" role="group" aria-label="X-Tunnel 乱序队列占用比例折线图">
+                        <svg class="chart-svg" aria-hidden="true"><line class="chart-crosshair"></line></svg>
+                    </div>
+                    <div class="chart-tooltip" id="queue-tooltip" role="tooltip" hidden></div>
+                    <details><summary>查看队列表格</summary><div class="table-scroll"><table><caption>队列占用有效样本</caption><thead><tr><th scope="col">采样时间</th><th scope="col">队列字节</th><th scope="col">占用比例</th><th scope="col">缺口期限</th></tr></thead><tbody id="queue-table-body"></tbody></table></div></details>
+                </article>
+                <article class="chart-card">
+                    <h3>请求与恢复事件增量</h3>
+                    <div class="chart-legend" id="events-legend" aria-label="事件图例"></div>
+                    <div class="chart-plot" id="events-chart" role="group" aria-label="Front 重试和 X-Tunnel 缺口恢复增量折线图">
+                        <svg class="chart-svg" aria-hidden="true"><line class="chart-crosshair"></line></svg>
+                    </div>
+                    <div class="chart-tooltip" id="events-tooltip" role="tooltip" hidden></div>
+                    <details><summary>查看事件表格</summary><div class="table-scroll"><table><caption>同段相邻样本的累计计数差分</caption><thead><tr><th scope="col">采样时间</th><th scope="col">Front 重试</th><th scope="col">缺口恢复</th></tr></thead><tbody id="events-table-body"></tbody></table></div></details>
+                </article>
+            </div>
+        </section>
+
+        <section id="resources" class="region" aria-labelledby="resources-title">
+            <div class="section-heading">
+                <h2 id="resources-title">资源与生命周期</h2>
+                <p>资源是当前瞬时值；线程与文件描述符使用同一计数单位，不设置第二条 Y 轴。</p>
+            </div>
+            <div class="resource-layout">
+                <div class="table-scroll">
+                    <table>
+                        <caption>当前进程与启动事实</caption>
+                        <tbody id="resource-table-body">
+                            <tr><th scope="row">采样状态</th><td>unknown</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <article class="chart-card">
+                    <h3>线程与文件描述符</h3>
+                    <div class="chart-legend" id="resources-legend" aria-label="资源图例"></div>
+                    <div class="chart-plot" id="resources-chart" role="group" aria-label="线程和文件描述符数量折线图">
+                        <svg class="chart-svg" aria-hidden="true"><line class="chart-crosshair"></line></svg>
+                    </div>
+                    <div class="chart-tooltip" id="resources-tooltip" role="tooltip" hidden></div>
+                    <details><summary>查看资源表格</summary><div class="table-scroll"><table><caption>资源有效样本</caption><thead><tr><th scope="col">采样时间</th><th scope="col">线程</th><th scope="col">文件描述符</th></tr></thead><tbody id="resources-table-body"></tbody></table></div></details>
+                </article>
+            </div>
+        </section>
+
+        <section id="exceptions" class="region" aria-labelledby="exceptions-title">
+            <div class="section-heading">
+                <h2 id="exceptions-title">异常与平衡点</h2>
+                <p>保护触发与恢复分开呈现。累计值不能证明本轮恢复成功，差分缺失时明确显示 NO_SAMPLE。</p>
+            </div>
+            <div class="table-scroll">
+                <table>
+                    <caption>当前代际最新快照</caption>
+                    <thead><tr><th scope="col">观察点</th><th scope="col">当前值</th><th scope="col">最近差分</th><th scope="col">解释边界</th></tr></thead>
+                    <tbody id="exception-table-body"><tr><td colspan="4">NO_SAMPLE</td></tr></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="evidence" class="region region-evidence" aria-labelledby="evidence-title">
+            <div class="section-heading">
+                <h2 id="evidence-title">证据边界</h2>
+                <p>页面只展示已采集事实，不把离线测试、无界面服务或页面打开请求扩大为完整桌面验收。</p>
+            </div>
+            <div class="evidence-grid">
+                <div>
+                    <h3>本页能够证明</h3>
+                    <ul>
+                        <li>当前浏览器窗口内收到的脱敏运行快照；</li>
+                        <li>导入文件与当前进程代际一致时的固定探针结果；</li>
+                        <li>同段样本的计数变化、采集失败和资源瞬时值。</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3>仍需独立验收</h3>
+                    <ul>
+                        <li>E1 无界面服务不能替代真实默认入口 E2；</li>
+                        <li>托盘菜单、用户实际看见页面和正常退出属于 E3；</li>
+                        <li>无样本、采集 unknown、窗口不足或代际不符均不能判为通过。</li>
+                    </ul>
+                </div>
+                <dl class="evidence-facts">
+                    <div><dt>启动模式</dt><dd id="evidence-startup">unknown</dd></div>
+                    <div><dt>托盘状态</dt><dd id="evidence-tray">unknown</dd></div>
+                    <div><dt>页面打开请求</dt><dd id="evidence-page">unknown</dd></div>
+                    <div><dt>证据等级</dt><dd>由生产校验器判定，本页不自行评级</dd></div>
+                </dl>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>数据仅来自同源 <code>/runtime_metrics</code> 和用户主动选择的本地 JSON；最多保留 360 个有效样本，刷新页面即开始新窗口。</p>
+    </footer>
+</body>
+</html>

@@ -13,6 +13,7 @@ import email.parser
 import email.policy
 import traceback
 import base64
+import ipaddress
 
 def parse_content_type(value):
     # Replacement of cgi.parse_header, cgi was removed in Python 3.13.
@@ -68,6 +69,7 @@ from xlog import getLogger, keep_log
 
 xlog = getLogger("launcher")
 import module_init
+import launcher_runtime_metrics as runtime_metrics
 from config import config, valid_language, app_name
 import autorun
 import update
@@ -258,6 +260,8 @@ class Http_Handler(simple_http_server.HttpServerHandler):
                 }, status=401)
 
         url_path = urlparse(self.path).path
+        if url_path == '/runtime_metrics':
+            return self.req_runtime_metrics_handler()
         if url_path == '/':
             return self.req_index_handler()
 
@@ -360,6 +364,18 @@ class Http_Handler(simple_http_server.HttpServerHandler):
             else:
                 self.send_not_found()
                 xlog.info('%s "%s %s HTTP/1.1" 404 -', self.address_string(), self.command, self.path)
+
+    def req_runtime_metrics_handler(self):
+        try:
+            is_loopback = ipaddress.ip_address(self.client_address[0]).is_loopback
+        except (ValueError, IndexError, TypeError):
+            is_loopback = False
+        if not is_loopback:
+            return self.send_response(content="", status=403)
+        content = json.dumps(runtime_metrics.collect_snapshot(), allow_nan=False)
+        return self.send_response("application/json", content, headers={
+            "Cache-Control": "no-store",
+        })
 
     def req_index_handler(self):
         req = urlparse(self.path).query
@@ -638,6 +654,12 @@ class Http_Handler(simple_http_server.HttpServerHandler):
                         module_init.start("x_tunnel")
                     else:
                         module_init.stop("x_tunnel")
+
+                    # Smart Router 在启动时快照 X-Tunnel 引用；可用性变化后必须重新绑定。
+                    if config.enable_smart_router:
+                        module_init.stop("smart_router")
+                        module_init.start("smart_router")
+
                     self.load_module_menus()
                     data = '{"res":"success"}'
             elif 'smart_router_enable' in reqs:
@@ -1133,7 +1155,8 @@ def start(allow_remote=0):
 def stop():
     global server
     xlog.info("begin to exit web control")
-    server.shutdown()
+    if server is not None:
+        server.shutdown()
     xlog.info("launcher web control exited.")
 
 
