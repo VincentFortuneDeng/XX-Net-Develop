@@ -21,9 +21,11 @@ six_stub.string_types = str
 sys.modules["six"] = six_stub
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-XLOG_PATH = os.path.join(
-    ROOT, "Coding", "XX-Net-5.16.7.1", "code", "default", "lib", "noarch", "xlog.py"
+NOARCH = os.path.join(
+    ROOT, "Coding", "XX-Net-5.16.7.1", "code", "default", "lib", "noarch"
 )
+XLOG_PATH = os.path.join(NOARCH, "xlog.py")
+sys.path.insert(0, NOARCH)  # 让按文件执行的真实 xlog 能解析其同目录依赖。
 xlog = types.ModuleType("xlog_unified_under_test")
 with open(XLOG_PATH, encoding="utf-8") as source:
     exec(compile(source.read(), XLOG_PATH, "exec"), xlog.__dict__)

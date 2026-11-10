@@ -200,6 +200,59 @@ class BoundedWriterTest(unittest.TestCase):
             self.assertIn("pending-before-reset", Path(tmp, "reset.log").read_text())
             logger.stop()
 
+    def assert_registry_iteration_tolerates_new_logger(self, operation_name):
+        original_registry = xlog.loggerDict
+        original_default = xlog.default_log
+        entered = threading.Event()
+        release = threading.Event()
+
+        class GatedLogger:
+            def reset_log_files(self):
+                entered.set()
+                if not release.wait(2):
+                    raise TimeoutError("test did not release registry iteration")
+
+            def keep_logs(self):
+                entered.set()
+                if not release.wait(2):
+                    raise TimeoutError("test did not release registry iteration")
+
+        gated = GatedLogger()
+        xlog.loggerDict = {"existing": gated}
+        xlog.default_log = gated
+
+        def restore_registry():
+            release.set()
+            xlog.loggerDict = original_registry
+            xlog.default_log = original_default
+
+        self.addCleanup(restore_registry)
+        errors = []
+
+        def run_operation():
+            try:
+                getattr(xlog, operation_name)()
+            except Exception as error:
+                errors.append(error)
+
+        operation = threading.Thread(target=run_operation)
+        operation.start()
+        self.assertTrue(entered.wait(1))
+        try:
+            created = xlog.getLogger("new")
+            self.assertIs(created, xlog.loggerDict["new"])
+        finally:
+            release.set()
+        operation.join(1)
+        self.assertFalse(operation.is_alive())
+        self.assertEqual(errors, [])
+
+    def test_reset_log_files_tolerates_concurrent_logger_creation(self):
+        self.assert_registry_iteration_tolerates_new_logger("reset_log_files")
+
+    def test_keep_log_tolerates_concurrent_logger_creation(self):
+        self.assert_registry_iteration_tolerates_new_logger("keep_log")
+
 
 if __name__ == "__main__":
     unittest.main()

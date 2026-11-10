@@ -13,6 +13,13 @@ from os.path import join
 from six import string_types
 
 import utils
+from runtime_metrics import CounterSet
+
+_RUNTIME_COUNTERS = CounterSet((
+    "log_dropped_total",
+    "log_write_failures_total",
+    "log_throttled_total",
+))
 
 CRITICAL = 50
 FATAL = CRITICAL
@@ -237,6 +244,7 @@ class Logger():
                 with self._counter_lock:
                     self.dropped_persistent_records += 1
                     self._dropped_pending += 1
+                _RUNTIME_COUNTERS.increment("log_dropped_total")
                 return
             if self._writer_thread is None or not self._writer_thread.is_alive():
                 self._writer_thread = threading.Thread(target=self._persistent_writer,
@@ -263,6 +271,9 @@ class Logger():
             self.dropped_persistent_records += count
             self.persistent_write_errors += 1
             self.last_persistent_write_error = repr(error)
+        if count > 0:
+            _RUNTIME_COUNTERS.increment("log_dropped_total", count)
+        _RUNTIME_COUNTERS.increment("log_write_failures_total")
         try:
             sys.stderr.write("%s persistent writer discarded %d records after %r\n" % (
                 self.name, count, error))
@@ -621,6 +632,7 @@ class LogThrottle(object):
             entry = self.hits.get(key)
             if entry is not None and now - entry[0] < self.interval:
                 entry[1] += 1
+                _RUNTIME_COUNTERS.increment("log_throttled_total")
                 return False, entry[1]
 
             suppressed = entry[1] if entry is not None else 0
@@ -676,6 +688,32 @@ class null():
 loggerDict = {}
 
 
+def runtime_snapshot(loggers=None):
+    if loggers is None:
+        loggers = list(loggerDict.values())
+    result = {"process." + name: value
+              for name, value in _RUNTIME_COUNTERS.snapshot().items()}
+    queue_length = 0 if loggers else None
+    for logger in loggers:
+        write_queue = getattr(logger, "write_queue", None)
+        lock = getattr(write_queue, "mutex", None)
+        if lock is None or not lock.acquire(False):
+            queue_length = None
+            continue
+        try:
+            length = len(write_queue.queue)
+        except Exception:
+            length = None
+        finally:
+            lock.release()
+        if length is None or queue_length is None:
+            queue_length = None
+        else:
+            queue_length += length
+    result["process.log_queue_length"] = queue_length
+    return result
+
+
 def getLogger(name=None, buffer_size=0, file_name=None, roll_num=1,
               log_path=None, save_start_log=0, save_warning_log=False,
               save_persistent_log=False):
@@ -703,7 +741,7 @@ def getLogger(name=None, buffer_size=0, file_name=None, roll_num=1,
 
 
 def reset_log_files():
-    for name, log in loggerDict.items():
+    for name, log in list(loggerDict.items()):
         log.reset_log_files()
 
 
@@ -723,7 +761,7 @@ def keep_log(temp=False):
     if temp:
         full_log = True
     else:
-        for name, log in loggerDict.items():
+        for name, log in list(loggerDict.items()):
             log.keep_logs()
 
 

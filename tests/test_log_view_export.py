@@ -21,7 +21,9 @@ sys.modules["six"] = six_stub
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CODE = os.path.join(ROOT, "Coding", "XX-Net-5.16.7.1", "code", "default")
-XLOG_PATH = os.path.join(CODE, "lib", "noarch", "xlog.py")
+NOARCH = os.path.join(CODE, "lib", "noarch")
+XLOG_PATH = os.path.join(NOARCH, "xlog.py")
+sys.path.insert(0, NOARCH)  # 让按文件执行的真实 xlog 能解析其同目录依赖。
 xlog = types.ModuleType("xlog_views_under_test")
 with open(XLOG_PATH, encoding="utf-8") as source:
     exec(compile(source.read(), XLOG_PATH, "exec"), xlog.__dict__)
@@ -52,8 +54,11 @@ class LogViewExportTests(unittest.TestCase):
     def tearDown(self):
         sys.stderr = self.original_stderr
         for logger in self.loggers:
-            if logger.persistent_fd:
-                logger.persistent_fd.close()
+            logger.stop()
+            for fd_name in ("persistent_fd", "log_fd"):
+                fd = getattr(logger, fd_name, None)
+                if fd:
+                    fd.close()
         self.temp_dir.cleanup()
 
     def make_logger(self, startup=2, persistent=True):
