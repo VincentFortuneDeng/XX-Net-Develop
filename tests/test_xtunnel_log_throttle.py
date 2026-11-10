@@ -508,6 +508,8 @@ check("X13 stop cleanup failure still flushes transfer once",
 
 # X14：reset 后的新 session 生命周期必须重新允许首报，不能永久封口。
 flush_session.login_session = lambda: True
+g.session = flush_session
+g.running = True
 start_error = None
 try:
     flush_session.start()

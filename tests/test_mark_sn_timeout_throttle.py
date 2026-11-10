@@ -49,9 +49,14 @@ xlog_stub.LogThrottle = LogThrottle
 xlog_stub.getLogger = lambda *args, **kwargs: None
 sys.modules["xlog"] = xlog_stub
 
+PKG = "x_tunnel_local_test"
+pkg = types.ModuleType(PKG)
+pkg.__path__ = [LOCAL]
+sys.modules[PKG] = pkg
 spec = importlib.util.spec_from_file_location(
-    "base_container_under_test", os.path.join(LOCAL, "base_container.py"))
+    PKG + ".base_container", os.path.join(LOCAL, "base_container.py"))
 base_container = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = base_container
 spec.loader.exec_module(base_container)
 
 

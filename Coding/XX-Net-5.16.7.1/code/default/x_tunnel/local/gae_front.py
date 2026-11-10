@@ -23,6 +23,7 @@ gae_proxy = None
 
 def init():
     global gae_proxy
+    gae_proxy = None
     if not proc_handler:
         return False
 

@@ -1,4 +1,5 @@
 import os
+import threading
 
 import xlog
 logger = xlog.getLogger("cloudfront_front")
@@ -25,6 +26,10 @@ module_data_path = os.path.join(data_path, 'x_tunnel')
 
 class Front(object):
     name = "cloudfront_front"
+
+    def __init__(self):
+        self.running = False
+        self._dispatch_lock = threading.Lock()
 
     def start(self):
         self.running = True
@@ -70,17 +75,22 @@ class Front(object):
         else:
             self.last_host = host
 
-        if host not in self.dispatchs:
-            http_dispatcher = HttpsDispatcher(
-                logger, self.config, self.ip_manager, self.connect_manager
-            )
-            self.dispatchs[host] = http_dispatcher
+        with self._dispatch_lock:
+            if not self.running:
+                return None
+            if host not in self.dispatchs:
+                http_dispatcher = HttpsDispatcher(
+                    logger, self.config, self.ip_manager, self.connect_manager,
+                    metrics_category="cloudfront"
+                )
+                self.dispatchs[host] = http_dispatcher
 
-        dispatcher = self.dispatchs[host]
-        return dispatcher
+            return self.dispatchs[host]
 
     def request(self, method, host, path="/", headers={}, data="", timeout=120):
         dispatcher = self.get_dispatcher(host)
+        if not dispatcher:
+            return "", 602, {}
         headers = dict(headers)
         response = dispatcher.request(method, host, path, headers, data, timeout=timeout)
         if not response:
@@ -99,14 +109,15 @@ class Front(object):
 
     def stop(self):
         logger.info("terminate")
+        with self._dispatch_lock:
+            self.running = False
+            dispatchers = list(self.dispatchs.values())
+            self.dispatchs = {}
         self.connect_manager.set_ssl_created_cb(None)
-        for host in self.dispatchs:
-            dispatcher = self.dispatchs[host]
+        for dispatcher in dispatchers:
             dispatcher.stop()
         self.connect_manager.stop()
         self.ip_manager.stop()
-
-        self.running = False
 
     def set_proxy(self, args):
         logger.info("set_proxy:%s", args)

@@ -13,6 +13,7 @@ from . import global_var as g
 import utils
 from xlog import getLogger, LogThrottle
 import env_info
+import simple_http_client
 
 current_path = os.path.dirname(os.path.abspath(__file__))
 root_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir))
@@ -27,6 +28,9 @@ def init():
     global cloudflare_front
 
     front_retry_log_throttle.reset()
+    cloudflare_front = None
+    for name in ("cloudflare_front", "cloudfront_front", "seley_front", "tls_relay_front"):
+        setattr(g, name, None)
 
     if g.config.enable_gae_proxy:
         from . import gae_front
@@ -90,8 +94,9 @@ def save_cloudflare_domain(domains):
 
 
 def front_staticstic_thread():
-    while g.running:
-        for front in all_fronts:
+    fronts = all_fronts
+    while g.running and all_fronts is fronts:
+        for front in fronts:
             dispatcher = front.get_dispatcher()
             if not dispatcher:
                 continue
@@ -227,14 +232,15 @@ def request(method, host, path="/", headers={}, data="", timeout=100):
             time.sleep(min(1, remaining))
             continue
 
-        header_len = int(response.headers.get(b"Content-Length", 0))
-        if header_len and len(content) != header_len:
-            xlog.warn("response length incorrect, head len:%s, content len:%d retry it", header_len, len(content))
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return "", 603, {}
-            time.sleep(min(1, remaining))
-            continue
+        if simple_http_client.response_has_body(method, status):
+            header_len = int(response.headers.get(b"Content-Length", 0))
+            if header_len and len(content) != header_len:
+                xlog.warn("response length incorrect, head len:%s, content len:%d retry it", header_len, len(content))
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return "", 603, {}
+                time.sleep(min(1, remaining))
+                continue
 
         if status == 200 and not getattr(getattr(response, "task", None), "response_complete", True):
             xlog.warn("response incomplete, content len:%d retry it", len(content))
@@ -271,6 +277,8 @@ def stop():
             light_fronts = []
             session_fronts = []
             cloudflare_front = None
+            for name in ("cloudflare_front", "cloudfront_front", "seley_front", "tls_relay_front"):
+                setattr(g, name, None)
             get_front_condition.notify_all()
     finally:
         notify_front_change()

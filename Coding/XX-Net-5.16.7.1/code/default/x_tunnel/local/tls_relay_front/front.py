@@ -55,6 +55,8 @@ class Front(object):
         self.password = ""
 
     def get_dispatcher(self, host=None):
+        if not self.running:
+            return None
         return self.http_dispatcher
 
     def set_x_tunnel_account(self, account, password):
@@ -96,6 +98,8 @@ class Front(object):
         self.http_dispatcher.start_connect_all_ips()
 
     def request(self, method, host, path="/", headers={}, data="", timeout=120):
+        if not self.running:
+            return "", 602, {}
         headers = dict(headers)
         if self.account:
             headers["XX-Account"] = self.account
@@ -119,11 +123,10 @@ class Front(object):
 
     def stop(self):
         logger.info("terminate")
+        self.running = False
         self.connect_manager.set_ssl_created_cb(None)
         self.http_dispatcher.stop()
         self.connect_manager.stop()
-
-        self.running = False
 
     def set_proxy(self, args):
         logger.info("set_proxy:%s", args)

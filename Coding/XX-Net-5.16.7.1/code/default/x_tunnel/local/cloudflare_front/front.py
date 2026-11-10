@@ -1,4 +1,5 @@
 import os
+import threading
 
 current_path = os.path.dirname(os.path.abspath(__file__))
 root_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir, os.pardir))
@@ -29,6 +30,7 @@ class Front(object):
 
     def __init__(self):
         self.running = False
+        self._dispatch_lock = threading.Lock()
         self.logger = logger
         config_path = os.path.join(module_data_path, "cloudflare_front.json")
         self.config = Config(config_path)
@@ -77,22 +79,26 @@ class Front(object):
         else:
             self.last_host = host
 
-        if host not in self.dispatchs:
-            if host in ["center.xx-net.org", "dns.xx-net.org"]:
-                config = self.light_config
-            else:
-                config = self.config
+        with self._dispatch_lock:
+            if not self.running:
+                return None
+            if host not in self.dispatchs:
+                if host in ["center.xx-net.org", "dns.xx-net.org"]:
+                    config = self.light_config
+                else:
+                    config = self.config
 
-            http_dispatcher = HttpsDispatcher(
-                logger, config, self.ip_manager, self.connect_manager,
-                http2worker=CloudflareHttp2Worker)
-            self.dispatchs[host] = http_dispatcher
+                http_dispatcher = HttpsDispatcher(
+                    logger, config, self.ip_manager, self.connect_manager,
+                    http2worker=CloudflareHttp2Worker, metrics_category="cloudflare")
+                self.dispatchs[host] = http_dispatcher
 
-        dispatcher = self.dispatchs[host]
-        return dispatcher
+            return self.dispatchs[host]
 
     def request(self, method, host, path="/", headers={}, data="", timeout=120):
         dispatcher = self.get_dispatcher(host)
+        if not dispatcher:
+            return "", 602, {}
         response = dispatcher.request(method, host, path, dict(headers), data, timeout=timeout)
         if not response:
             self.logger.warn("req %s get response timeout", path)
@@ -110,13 +116,14 @@ class Front(object):
 
     def stop(self):
         logger.info("terminate")
+        with self._dispatch_lock:
+            self.running = False
+            dispatchers = list(self.dispatchs.values())
+            self.dispatchs = {}
         self.connect_manager.set_ssl_created_cb(None)
-        for host in self.dispatchs:
-            dispatcher = self.dispatchs[host]
+        for dispatcher in dispatchers:
             dispatcher.stop()
         self.connect_manager.stop()
-
-        self.running = False
 
     def set_proxy(self, args):
         logger.info("set_proxy:%s", args)

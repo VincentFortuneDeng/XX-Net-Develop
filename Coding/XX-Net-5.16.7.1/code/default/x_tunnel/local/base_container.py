@@ -9,6 +9,7 @@ from datetime import datetime
 import selectors2 as selectors
 
 import utils
+from . import metrics
 
 from xlog import getLogger, LogThrottle
 xlog = getLogger("x_tunnel")
@@ -429,8 +430,15 @@ class ConnectionPipe(object):
         return out_string
 
     def start(self):
-        self.running = True
-        self.sock_conn_map = {}
+        with self._lock:
+            # 旧 Conn 异步停止可能晚于重启；先注销旧注册，避免清空映射后无法再清理。
+            for sock in list(self.sock_conn_map):
+                try:
+                    self.select2.unregister(sock)
+                except Exception as e:
+                    self.xlog.warn("ConnectionPipe restart unregister e:%r", e)
+            self.sock_conn_map = {}
+            self.running = True
 
     def stop(self):
         self.running = False
@@ -447,26 +455,27 @@ class ConnectionPipe(object):
         if not sock:
             return
 
+        register_error = None
         with self._lock:
             self._debug_log("add_sock_event conn:%d event:%s", conn.conn_id, event)
             try:
                 self.select2.register_event(sock, event, conn)
             except Exception as e:
+                register_error = e
                 self.xlog.warn("add_sock_event %s conn:%d e:%r", sock, conn.conn_id, e)
-                self.close_sock(sock, str(e) + "_when_add_sock_event")
-                return
 
-            # if sys.platform == "win32" and (sock not in self.sock_conn_map or event == selectors.EVENT_WRITE):
-            #     self.notice_select()
+            if register_error is None:
+                self.sock_conn_map[sock] = conn
 
-            self.sock_conn_map[sock] = conn
+                if not self.th:
+                    self.th = threading.Thread(target=self.pipe_worker, name="x_tunnel_pipe_worker")
+                    self.th.start()
+                    self._debug_log("ConnectionPipe start")
 
-            if not self.th:
-                self.th = threading.Thread(target=self.pipe_worker, name="x_tunnel_pipe_worker")
-                self.th.start()
-                self._debug_log("ConnectionPipe start")
+        if register_error is not None:
+            self.close_sock(sock, str(register_error) + "_when_add_sock_event", expected_conn=conn)
 
-    def remove_sock_event(self, sock, event):
+    def remove_sock_event(self, sock, event, expected_conn=None):
         # this function can repeat without through an error.
 
         with self._lock:
@@ -475,6 +484,8 @@ class ConnectionPipe(object):
 
             try:
                 conn = self.sock_conn_map[sock]
+                if expected_conn is not None and conn is not expected_conn:
+                    return
                 self._debug_log("remove_sock_event conn:%d event:%s", conn.conn_id, event)
                 res = self.select2.unregister_event(sock, event)
                 if not res:
@@ -483,13 +494,15 @@ class ConnectionPipe(object):
             except Exception as e:
                 self.xlog.exception("remove_sock_event %s event:%s e:%r", sock, event, e)
 
-    def remove_sock(self, sock):
+    def remove_sock(self, sock, expected_conn=None):
         with self._lock:
             if sock not in self.sock_conn_map:
                 return
 
             try:
                 conn = self.sock_conn_map[sock]
+                if expected_conn is not None and conn is not expected_conn:
+                    return
                 self._debug_log("remove_sock all events conn:%d", conn.conn_id)
                 del self.sock_conn_map[sock]
                 self.select2.unregister(sock)
@@ -497,26 +510,34 @@ class ConnectionPipe(object):
                 # error will happen when sock closed
                 self.xlog.warn("ConnectionPipe remove sock e:%r", e)
 
-    def close_sock(self, sock, reason):
-        if sock not in self.sock_conn_map:
-            return
+    def close_sock(self, sock, reason, expected_conn=None):
+        with self._lock:
+            conn = self.sock_conn_map.get(sock)
+            if conn is None:
+                if expected_conn is None:
+                    return
+                # 首次注册失败时映射尚未建立，调用方仍持有需要清理的 Conn。
+                conn = expected_conn
+            elif expected_conn is not None and conn is not expected_conn:
+                return
+            if self.sock_conn_map.get(sock) is conn:
+                self.remove_sock(sock, expected_conn=conn)
 
         try:
-            conn = self.sock_conn_map[sock]
-            # self.xlog.info("close conn:%d", conn.conn_id)
-            self.remove_sock(sock)
-
             conn.transfer_peer_close(reason)
             conn.do_stop(reason=reason)
         except Exception as e:
             self.xlog.exception("close_sock %s e:%r", sock, e)
 
     def reset_all_connections(self):
-        for sock, conn in dict(self.sock_conn_map).items():
-            self.close_sock(sock, "reset_all")
+        with self._lock:
+            connections = list(dict(self.sock_conn_map).items())
+            self.sock_conn_map = {}
+            self.select2 = selectors.DefaultSelector()
 
-        self.sock_conn_map = {}
-        self.select2 = selectors.DefaultSelector()
+        for sock, conn in connections:
+            # Conn 回调会获取 session 锁，不能在 pipe 锁内执行。
+            self.close_sock(sock, "reset_all", expected_conn=conn)
 
     def notice_select(self):
         self.xlog.debug("notice select")
@@ -562,6 +583,10 @@ class ConnectionPipe(object):
                         self.read_notify()
                         continue
 
+                    with self._lock:
+                        if self.sock_conn_map.get(sock) is not conn:
+                            continue
+
                     if event & selectors.EVENT_READ:
                         try:
                             data = sock.recv(65535)
@@ -572,25 +597,33 @@ class ConnectionPipe(object):
                         data_len = len(data)
                         if data_len == 0:
                             # self.xlog.debug("Conn conn:%d recv zero", conn.conn_id)
-                            self.close_sock(sock, "receive")
+                            self.close_sock(sock, "receive", expected_conn=conn)
                             continue
                         else:
+                            with self._lock:
+                                if self.sock_conn_map.get(sock) is not conn:
+                                    continue
                             conn.last_active = now
                             self._debug_log("Conn session:%s conn:%d local recv len:%d pos:%d",
                                             self.session.session_id, conn.conn_id, data_len, conn.received_position)
 
                             conn.transfer_received_data(data)
                     elif event & selectors.EVENT_WRITE:
+                        with self._lock:
+                            if self.sock_conn_map.get(sock) is not conn:
+                                continue
                         conn.blocked = False
                         conn.process_cmd()
                     else:
                         self.xlog.debug("no event for conn:%d", conn.conn_id)
-                        self.close_sock(sock, "no_event")
+                        self.close_sock(sock, "no_event", expected_conn=conn)
 
             except Exception as e:
                 xlog.exception("recv_worker e:%r", e)
 
         with self._lock:
+            if self.th is not threading.current_thread():
+                return
             if self.running and self.sock_conn_map:
                 self.th = threading.Thread(target=self.pipe_worker, name="x_tunnel_pipe_worker")
                 self.th.start()
@@ -623,6 +656,13 @@ class Conn(object):
         self.xlog = xlog
 
         self.cmd_queue = {}
+        self.cmd_queue_bytes = 0
+        self.cmd_queue_since = None
+        self._gap_recovery_pending = False
+        self._gap_target_seq = None
+        # 合法乱序可能覆盖整个下载窗口；必须给缺失命令的重取留出空间。
+        self.max_cmd_queue_bytes = windows_size + session.config.max_payload
+        self.cmd_queue_gap_timeout = 30
         self.running = True
         self.read_started = not is_client
         self.blocked = False
@@ -647,10 +687,14 @@ class Conn(object):
 
     def start(self, block):
         self.sock.setblocking(False)
+        register_write = False
         with self._lock:
             self.read_started = True
             if self.sock and self.cmd_queue:
-                self.connection_pipe.add_sock_event(self.sock, self, selectors.EVENT_WRITE)
+                register_write = True
+
+        if register_write:
+            self.connection_pipe.add_sock_event(self.sock, self, selectors.EVENT_WRITE)
 
         if self.sock and not self.session.read_paused:
             self.connection_pipe.add_sock_event(self.sock, self, selectors.EVENT_READ)
@@ -683,18 +727,26 @@ class Conn(object):
     def do_stop(self, reason="unknown"):
         self.xlog.debug("Conn session:%s %s:%d conn:%d fd:%d stop:%s", utils.to_str(self.session.session_id),
                         self.host, self.port, self.conn_id, self._fd, reason)
-        self.running = False
+        with self._lock:
+            was_running = self.running
+            self.running = False
+            self.cmd_queue = {}
+            self.cmd_queue_bytes = 0
+            self.cmd_queue_since = None
+            self._gap_recovery_pending = False
+            self._gap_target_seq = None
+            sock = self.sock
+            self.sock = None
 
-        self.connection_pipe.remove_sock(self.sock)
+        if was_running:
+            metrics.record_conn_stop(reason)
+        self.connection_pipe.remove_sock(sock, expected_conn=self)
 
-        self.cmd_queue = {}
-
-        if self.sock is not None:
+        if sock is not None:
             try:
-                self.sock.close()
+                sock.close()
             except:
                 pass
-            self.sock = None
 
         # self.xlog.debug("Conn session:%s conn:%d stopped", self.session.session_id, self.conn_id)
         self.session.remove_conn(self.conn_id, expected_conn=self)
@@ -742,25 +794,64 @@ class Conn(object):
             return e, False
 
     def put_cmd_data(self, data):
-        if not self.running:
-            return
-
         seq = struct.unpack("<I", data.get(4))[0]
-        if seq < self.next_cmd_seq:
-            self.xlog.warn("put_send_data %s conn:%d seq:%d next:%d",
-                           self.session.session_id, self.conn_id,
-                           seq, self.next_cmd_seq)
-            return
-
-        self._debug_log("conn:%d put data seq:%d len:%d", self.conn_id, seq, len(data))
+        process_without_sock = False
+        register_write = False
+        stop_reason = None
+        new_gap = False
 
         with self._lock:
-            self.cmd_queue[seq] = data.get_buf()
-            if seq == self.next_cmd_seq:
-                if self.sock and self.read_started:
-                    self.connection_pipe.add_sock_event(self.sock, self, selectors.EVENT_WRITE)
-                elif not self.sock:
-                    self.process_cmd()
+            if not self.running:
+                return
+            if seq < self.next_cmd_seq:
+                self.xlog.warn("put_send_data %s conn:%d seq:%d next:%d",
+                               self.session.session_id, self.conn_id,
+                               seq, self.next_cmd_seq)
+                return
+            if seq in self.cmd_queue:
+                return
+
+            self._debug_log("conn:%d put data seq:%d len:%d", self.conn_id, seq, len(data))
+            payload = data.get_buf()
+            if seq > self.next_cmd_seq:
+                now = time.monotonic()
+                if self.cmd_queue_since is None:
+                    self.cmd_queue_since = now
+                    self._gap_recovery_pending = True
+                    self._gap_target_seq = self.next_cmd_seq
+                    new_gap = True
+                elif now - self.cmd_queue_since >= self.cmd_queue_gap_timeout:
+                    stop_reason = "command_gap_timeout"
+
+                if self.cmd_queue_bytes + len(payload) > self.max_cmd_queue_bytes:
+                    stop_reason = "command_queue_overflow"
+
+            if stop_reason is None:
+                self.cmd_queue[seq] = payload
+                self.cmd_queue_bytes = getattr(self, "cmd_queue_bytes", 0) + len(payload)
+                if seq == self.next_cmd_seq:
+                    if self.sock and self.read_started:
+                        register_write = True
+                    elif not self.sock:
+                        process_without_sock = True
+
+        if new_gap:
+            metrics.increment("command_gaps_total")
+        if stop_reason is not None:
+            self.do_stop(stop_reason)
+        elif process_without_sock:
+            # process_cmd 会重新获取同一把普通锁，不能在持锁状态调用。
+            self.process_cmd()
+        elif register_write:
+            self.connection_pipe.add_sock_event(self.sock, self, selectors.EVENT_WRITE)
+
+    def check_cmd_queue(self):
+        with self._lock:
+            if not self.running or self.cmd_queue_since is None:
+                return
+            if time.monotonic() - self.cmd_queue_since < self.cmd_queue_gap_timeout:
+                return
+        self.do_stop("command_gap_timeout")
 
     def get_cmd_data(self):
         if self.next_cmd_seq not in self.cmd_queue:
@@ -769,6 +860,9 @@ class Conn(object):
 
         payload = self.cmd_queue[self.next_cmd_seq]
         del self.cmd_queue[self.next_cmd_seq]
+        self.cmd_queue_bytes = max(
+            0, getattr(self, "cmd_queue_bytes", len(payload)) - len(payload))
+        self.cmd_queue_since = time.monotonic() if self.cmd_queue else None
         # self.xlog.debug("Conn session:%s conn:%d get data sn:%d len:%d ",
         #                self.session.session_id, self.conn_id, self.next_cmd_seq, len(payload))
         self.next_cmd_seq += 1
@@ -792,8 +886,14 @@ class Conn(object):
                 data = self.get_cmd_data()
                 if not data:
                     self._debug_log("conn:%d no data", self.conn_id)
-                    self.connection_pipe.remove_sock_event(self.sock, selectors.EVENT_WRITE)
+                    self.connection_pipe.remove_sock_event(
+                        self.sock, selectors.EVENT_WRITE, expected_conn=self)
                     break
+                processed_seq = self.next_cmd_seq - 1
+                recovery_pending = (
+                    getattr(self, "_gap_recovery_pending", False) and
+                    getattr(self, "_gap_target_seq", None) == processed_seq)
+                sended_before = getattr(self, "sended_position", 0)
 
             self.last_active = time.time()
             cmd_id = struct.unpack("<B", data.get(1))[0]
@@ -817,7 +917,7 @@ class Conn(object):
                 if self.is_client:
                     self.transfer_peer_close("finish")
                     if b"exceed the max connection" in dat:
-                        self.session.reset()
+                        self.session.reset(expected_conn=self, conn_id=self.conn_id)
                 self.stop("peer close")
 
             elif cmd_id == 0:  # Create connect
@@ -837,14 +937,25 @@ class Conn(object):
                                self.host, self.port)
                     self.transfer_peer_close("connect fail")
                 else:
+                    with self.session.lock:
+                        if not self.running or self.session.conn_list.get(self.conn_id) is not self:
+                            # 建连期间 Conn 可能已停止；迟到 socket 仍由当前执行流负责关闭。
+                            sock.close()
+                            return
+                        self.sock = sock
                     self.xlog.info("Conn session:%s conn:%d %s:%d", self.session.session_id, self.conn_id, self.host,
                               self.port)
-                    self.sock = sock
                     self.session.update_backpressure()
             else:
                 self.xlog.error("Conn session:%s conn:%d unknown cmd_id:%d",
                                 self.session.session_id, self.conn_id, cmd_id)
                 raise Exception("put_send_data unknown cmd_id:%d" % cmd_id)
+
+            if recovery_pending:
+                self._gap_recovery_pending = False
+                self._gap_target_seq = None
+                if cmd_id not in (1, 2) or (cmd_id == 1 and self.sended_position > sended_before):
+                    metrics.increment("command_gap_recovered_total")
 
     def send_to_sock(self, data):
         # return True when not blocked, can send more data
@@ -898,7 +1009,7 @@ class Conn(object):
         cmd = struct.pack("<IB", self.next_recv_seq, 2)
         if isinstance(reason, str):
             reason = reason.encode("utf-8")
-        self.session.send_conn_data(self.conn_id, cmd + reason)
+        self.session.send_conn_data(self.conn_id, cmd + reason, expected_conn=self)
         self.next_recv_seq += 1
 
     def transfer_received_data(self, data):
@@ -910,17 +1021,18 @@ class Conn(object):
         self.next_recv_seq += 1
         self.received_position += len(data)
 
-        self.session.send_conn_data(self.conn_id, buf)
+        self.session.send_conn_data(self.conn_id, buf, expected_conn=self)
 
         if self.received_position > self.remote_acked_position + self.windows_size:
             self.xlog.debug("Conn session:%s conn:%d recv blocked, rcv:%d, ack:%d", self.session.session_id,
                             self.conn_id, self.received_position, self.remote_acked_position)
-            self.connection_pipe.remove_sock_event(self.sock, selectors.EVENT_READ)
+            self.connection_pipe.remove_sock_event(
+                self.sock, selectors.EVENT_READ, expected_conn=self)
 
     def transfer_ack(self, position):
         if self.transferred_close_to_peer:
             return
 
         cmd_position = struct.pack("<IBQ", self.next_recv_seq, 3, position)
-        self.session.send_conn_data(self.conn_id, cmd_position)
+        self.session.send_conn_data(self.conn_id, cmd_position, expected_conn=self)
         self.next_recv_seq += 1

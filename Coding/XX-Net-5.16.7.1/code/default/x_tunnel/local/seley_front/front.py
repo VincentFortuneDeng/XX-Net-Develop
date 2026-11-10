@@ -60,12 +60,14 @@ class Front(object):
         self.http_dispatcher.start_connect_all_ips()
 
     def get_dispatcher(self, host=None):
-        if len(self.ip_manager.hosts) == 0:
+        if not self.running or len(self.ip_manager.hosts) == 0:
             return None
 
         return self.http_dispatcher
 
     def request(self, method, host, path="/", headers={}, data="", timeout=120):
+        if not self.running:
+            return "", 602, {}
         headers = dict(headers)
         headers["XX-Account"] = self.account
         headers["X-Host"] = host
@@ -88,11 +90,10 @@ class Front(object):
 
     def stop(self):
         logger.info("terminate")
+        self.running = False
         self.connect_manager.set_ssl_created_cb(None)
         self.http_dispatcher.stop()
         self.connect_manager.stop()
-
-        self.running = False
 
     def set_proxy(self, args):
         logger.info("set_proxy:%s", args)

@@ -162,10 +162,8 @@ class Socks5Server():
                 if left >= size:
                     break
 
-                need = size - left
-
                 try:
-                    data = sock.recv(need)
+                    data = sock.recv(8192)
                 except socket.error as e:
                     # logging.exception("e:%r", e)
                     if e.errno in [2, 11, 10035]:
@@ -211,7 +209,7 @@ class Socks5Server():
         else:
             addr = ip
 
-        conn_id = proxy_session.create_conn(sock, addr, port)
+        conn_id, conn = proxy_session.create_conn(sock, addr, port, return_conn=True)
         if not conn_id:
             xlog.warn("Socks4 connect fail, no conn_id")
             reply = b"\x00\x5b\x00" + addr_pack + struct.pack(">H", port)
@@ -223,11 +221,11 @@ class Socks5Server():
         try:
             sock.send(reply)
         except Exception as e:
-            g.session.stop_conn(conn_id, "close_on_Socks4_reply")
+            g.session.stop_conn(conn_id, "close_on_Socks4_reply", expected_conn=conn)
             xlog.warn("Socks4 %r connect to %s:%d conn:%d closed:%r", self.client_address, addr, port, conn_id, e)
             return
 
-        if not g.session.start_conn(conn_id, self.read_buffer[self.buffer_start:]):
+        if not g.session.start_conn(conn_id, self.read_buffer[self.buffer_start:], expected_conn=conn):
             return
 
     def socks5_handler(self):
@@ -273,9 +271,9 @@ class Socks5Server():
             sock.send(b"\x05\x07\x00\x01")  # Command not supported
             return
 
-        port = struct.unpack('>H', self.rfile.read(2))[0]
+        port = struct.unpack('>H', self.read_bytes(2))[0]
 
-        conn_id = proxy_session.create_conn(sock, addr, port)
+        conn_id, conn = proxy_session.create_conn(sock, addr, port, return_conn=True)
         if not conn_id:
             xlog.warn("socks5 create conn to %s:%d fail", addr, port)
             reply = b"\x05\x01\x00" + addrtype_pack + addr_pack + struct.pack(">H", port)
@@ -287,11 +285,11 @@ class Socks5Server():
         try:
             sock.send(reply)
         except Exception as e:
-            g.session.stop_conn(conn_id, "close_on_Socks5_reply")
+            g.session.stop_conn(conn_id, "close_on_Socks5_reply", expected_conn=conn)
             xlog.warn("socks5 %r connect to %s:%d conn_id:%d closed:%r", self.client_address, addr, port, conn_id, e)
             return
 
-        if not g.session.start_conn(conn_id, self.read_buffer[self.buffer_start:]):
+        if not g.session.start_conn(conn_id, self.read_buffer[self.buffer_start:], expected_conn=conn):
             return
 
     def https_handler(self):
@@ -318,7 +316,7 @@ class Socks5Server():
         header_block = self.read_headers()
 
         sock = self.connection
-        conn_id = proxy_session.create_conn(sock, host, port)
+        conn_id, conn = proxy_session.create_conn(sock, host, port, return_conn=True)
         if not conn_id:
             xlog.warn("https create conn to %s:%d fail", host, port)
             sock.send(b'HTTP/1.1 500 Fail\r\n\r\n')
@@ -328,11 +326,11 @@ class Socks5Server():
         try:
             sock.send(b'HTTP/1.1 200 OK\r\n\r\n')
         except Exception as e:
-            g.session.stop_conn(conn_id, "close_on_Https_reply")
+            g.session.stop_conn(conn_id, "close_on_Https_reply", expected_conn=conn)
             xlog.warn("https %r connect to %s:%d conn:%d closed:%r", self.client_address, host, port, conn_id, e)
             return
 
-        if not g.session.start_conn(conn_id, self.read_buffer[self.buffer_start:]):
+        if not g.session.start_conn(conn_id, self.read_buffer[self.buffer_start:], expected_conn=conn):
             return
 
     def http_handler(self, first_char):
@@ -382,7 +380,7 @@ class Socks5Server():
                 return openai_handler.handle_openai(method, url, headers, req_body, self.connection)
 
         sock = self.connection
-        conn_id = proxy_session.create_conn(sock, host, port)
+        conn_id, conn = proxy_session.create_conn(sock, host, port, return_conn=True)
         if not conn_id:
             xlog.warn("http create conn to %s:%d fail", host, port)
             sock.send(b'HTTP/1.1 500 Fail\r\n\r\n')
@@ -392,5 +390,5 @@ class Socks5Server():
 
         new_req_line = b"%s %s %s" % (method, path, http_version)
         left_buf = new_req_line + self.read_buffer[(len(req_line) + 1):]
-        g.session.start_conn(conn_id, left_buf)
+        g.session.start_conn(conn_id, left_buf, expected_conn=conn)
 
