@@ -9,6 +9,7 @@ import utils
 import selectors2 as selectors
 
 from . import global_var as g
+from . import metrics
 from xlog import getLogger
 xlog = getLogger("smart_router")
 
@@ -85,69 +86,82 @@ class PipeSocks(object):
                 xlog.error("try to add_socks closed socket:%s %s", s1, s2)
                 s1.close()
                 s2.close()
-                return
+                metrics.increment("smart_router.handoff_failures_total")
+                metrics.increment("smart_router.pipe_closed_socket_handoffs_total")
+                return False
 
         s1.setblocking(0)
         s2.setblocking(0)
 
+        failure = None
         with self.sock_notify:
-            s1.pair_sock = s2
-            s2.pair_sock = s1
-            # self.select2.register(s1, selectors.EVENT_READ)
-            # self.select2.register(s2, selectors.EVENT_READ)
-            # self.read_set.add(s1)
-            # self.read_set.add(s2)
-            self.try_add("READ", s1)
-            self.try_add("READ", s2)
-
-            self.sock_notify.notify()
+            if not self.running:
+                # 停止是发布边界，迟到的新配对由当前调用方关闭。
+                s1.close()
+                s2.close()
+                failure = "stopped"
+            else:
+                s1.pair_sock = s2
+                s2.pair_sock = s1
+                if not self.try_add("READ", s1) or not self.try_add("READ", s2):
+                    self.try_remove("READ", s1)
+                    self.try_remove("READ", s2)
+                    self.read_set.discard(s1)
+                    self.read_set.discard(s2)
+                    self.write_set.discard(s1)
+                    self.write_set.discard(s2)
+                    s1.close()
+                    s2.close()
+                    self.sock_notify.notify()
+                    failure = "register"
+                else:
+                    self.sock_notify.notify()
+                    return True
+        if failure == "register":
+            xlog.warn("pipe add_socks registration failed; pair closed")
+            metrics.increment("smart_router.pipe_register_failures_total")
+        elif failure == "stopped":
+            metrics.increment("smart_router.pipe_stopped_handoffs_total")
+        metrics.increment("smart_router.handoff_failures_total")
+        metrics.increment("smart_router.pipe_controlled_closes_total")
+        return False
 
     def try_add(self, l, s):
         # register 前校验 fd 仍有效，避免 close/register 竞态触发 ValueError(-1)。
         try:
             if s.fileno() < 0:
                 xlog.debug("try_add %s on closed socket, skip", s)
-                return
+                return False
         except (OSError, ValueError):
             xlog.debug("try_add %s on closed socket, skip", s)
-            return
+            return False
 
         try:
             if l == "READ":
-                if s in self.read_set:
-                    # xlog.warn("%s already in read set", s)
-                    pass
-                else:
+                if s not in self.read_set:
                     if s in self.write_set:
                         self.select2.modify(s, selectors.EVENT_WRITE | selectors.EVENT_READ)
-                        # xlog.debug("change %s to read|write", s)
                     else:
                         self.select2.register(s, selectors.EVENT_READ)
-                        # xlog.debug("change %s to read", s)
                     self.read_set.add(s)
             elif l == "WRITE":
-                if s in self.write_set:
-                    # xlog.warn("%s already in write set", s)
-                    pass
-                else:
+                if s not in self.write_set:
                     if s in self.read_set:
                         self.select2.modify(s, selectors.EVENT_WRITE | selectors.EVENT_READ)
-                        # xlog.debug("change %s to read|write", s)
                     else:
                         self.select2.register(s, selectors.EVENT_WRITE)
-                        # xlog.debug("change %s to write", s)
                     self.write_set.add(s)
             else:
                 xlog.error("unknown list %s", l)
+                return False
+            return True
         except ValueError as e:
-            # selector register got an invalid fd: socket closed between the
-            # fileno() check and register(). Harmless race, drop the add.
             xlog.debug("try_add %s race, fd closed during register:%r", s, e)
         except KeyError as e:
-            # same socket re-added by a concurrent path before our set updated.
             xlog.debug("try_add %s already registered:%r", s, e)
         except Exception as e:
             xlog.exception("try_add e:%r", e)
+        return False
 
     def try_remove(self, l, s):
         try:
@@ -191,6 +205,7 @@ class PipeSocks(object):
             xlog.exception("try_remove e:%r", e)
 
     def close(self, s1, e):
+        metrics.increment("smart_router.pipe_controlled_closes_total")
         xlog.debug("%s close", s1)
 
         # B6: settle any pending rate-limit account for this socket. The tail
@@ -257,8 +272,13 @@ class PipeSocks(object):
             try:
                 # r, w, error_set = select.select(self.read_set, self.write_set, self.error_set, 0.1)
                 events = self.select2.select(timeout=5)
-            except ValueError as e:
+            except Exception as e:
                 xlog.exception("pipe select except:%r", e)
+                metrics.increment("smart_router.pipe_select_failures_total")
+                with self.sock_notify:
+                    self.running = False
+                    for s in list(self.read_set) + list(self.write_set):
+                        self.close(s, "select_error")
                 return
 
             read_list = []
@@ -383,7 +403,9 @@ class PipeSocks(object):
                             d = memoryview(d)
                         s2.add_dat(d)
 
-                    self.try_add("WRITE", s2)
+                    if not self.try_add("WRITE", s2):
+                        self.close(s2, "write_register")
+                        continue
 
                     if s2.buf_size > self.buf_size:
                         self.try_remove("READ", s1)
@@ -458,8 +480,11 @@ class PipeSocks(object):
                     self.close(s1, "e")
             except Exception as e:
                 xlog.exception("pipe except:%r", e)
+                metrics.increment("smart_router.pipe_loop_failures_total")
+                self.running = False
 
         with self.sock_notify:
+            self.running = False
             for s in list(self.read_set) + list(self.write_set):
                 self.close(s, "stop")
 

@@ -13,6 +13,7 @@ import utils
 import simple_http_server
 from .socket_wrap import SocketWrap
 from . import global_var as g
+from . import metrics
 import socks
 
 from xlog import getLogger
@@ -34,6 +35,10 @@ class DontFakeCA(Exception):
 
 
 class ConnectFail(Exception):
+    pass
+
+
+class HandoffFail(ConnectFail):
     pass
 
 
@@ -214,9 +219,19 @@ def do_direct(sock, host, ips, port, client_address, left_buf=b""):
         raise ConnectFail()
 
     xlog.debug("host:%s:%d direct connect %s success", host, port, remote_sock.ip)
-    if left_buf:
-        remote_sock.send(left_buf)
-    g.pipe_socks.add_socks(sock, remote_sock)
+    handed_off = False
+    try:
+        if left_buf:
+            try:
+                remote_sock.sendall(left_buf)
+            except OSError as error:
+                raise ConnectFail() from error
+        if not g.pipe_socks.add_socks(sock, remote_sock):
+            raise HandoffFail()
+        handed_off = True
+    finally:
+        if not handed_off:
+            remote_sock.close()
 
 
 def do_redirect_https(sock, host, ips, port, client_address, left_buf=b""):
@@ -226,16 +241,29 @@ def do_redirect_https(sock, host, ips, port, client_address, left_buf=b""):
 
     try:
         ssl_sock = ssl_context.wrap_socket(remote_sock._sock, server_hostname=host)
-    except Exception as e:
+    except Exception:
+        # TLS 包装未形成新所有者时，由原连接当前栈负责回收。
+        try:
+            remote_sock.close()
+        except Exception:
+            pass
         raise RedirectHttpsFail()
 
     xlog.debug("host:%s:%d redirect_https connect %s success", host, port, remote_sock.ip)
 
-    if left_buf:
-        ssl_sock.send(left_buf)
-    sw = SocketWrap(ssl_sock, remote_sock.ip, port, host)
-    sock.recved_times = 3
-    g.pipe_socks.add_socks(sock, sw)
+    handed_off = False
+    try:
+        if left_buf:
+            ssl_sock.sendall(left_buf)
+        sw = SocketWrap(ssl_sock, remote_sock.ip, port, host)
+        sock.recved_times = 3
+        if not g.pipe_socks.add_socks(sock, sw):
+            raise RedirectHttpsFail()
+        handed_off = True
+    finally:
+        if not handed_off:
+            # PipeSocks 接管前，发送或注册失败均由当前栈关闭 TLS 远端。
+            ssl_sock.close()
 
 
 def do_socks(sock, host, port, client_address, left_buf=b""):
@@ -243,7 +271,7 @@ def do_socks(sock, host, port, client_address, left_buf=b""):
         raise XTunnelNotRunning()
 
     try:
-        conn_id = g.x_tunnel.proxy_session.create_conn(sock, host, port, True)
+        conn_id, conn = g.x_tunnel.proxy_session.create_conn(sock, host, port, True, return_conn=True)
     except Exception as e:
         xlog.warn("do_sock to %s:%d, x_tunnel fail:%r", host, port, e)
         raise XTunnelNotRunning()
@@ -254,8 +282,30 @@ def do_socks(sock, host, port, client_address, left_buf=b""):
 
     # xlog.debug("do_socks %r connect to %s:%d conn_id:%d", client_address, host, port, conn_id)
     session = g.x_tunnel.global_var.session
-    if not session.start_conn(conn_id, left_buf):
+    if not session.start_conn(conn_id, left_buf, expected_conn=conn):
         raise XTunnelNotRunning()
+
+
+def _get_buffered_request_data(req):
+    connection = req.connection
+    rfile = req.rfile
+    if not hasattr(connection, "setblocking") or not hasattr(rfile, "peek"):
+        return b""
+
+    timeout = connection.gettimeout()
+    try:
+        # 只转移 reader 已缓冲或无需等待即可取得的数据，不能在回退时再次阻塞读请求。
+        connection.setblocking(False)
+        return rfile.peek()
+    except (BlockingIOError, ssl.SSLWantReadError):
+        return b""
+    except (OSError, ValueError):
+        return b""
+    finally:
+        try:
+            connection.settimeout(timeout)
+        except (OSError, ValueError):
+            pass
 
 
 def do_unwrap_socks(sock, host, port, client_address, req, left_buf=b""):
@@ -275,25 +325,32 @@ def do_unwrap_socks(sock, host, port, client_address, req, left_buf=b""):
         try:
             remote_ssl_sock = ssl_context.wrap_socket(remote_sock, server_hostname=host)
         except:
+            remote_sock.close()
             xlog.warn("do_unwrap_socks ssl_wrap for %s:%d proxy fail.", host, port)
             return
     else:
         remote_ssl_sock = remote_sock
 
-    # avoid close by req.__del__
+    try:
+        buffered_data = _get_buffered_request_data(req)
+        remote_ssl_sock.sendall(left_buf + buffered_data)
+        sw = SocketWrap(remote_ssl_sock, "x-tunnel", port, host)
+        if not isinstance(sock, SocketWrap):
+            sock = SocketWrap(sock, client_address[0], client_address[1])
+        sock.recved_times = 3
+        if not g.pipe_socks.add_socks(sock, sw):
+            raise HandoffFail()
+    except Exception as e:
+        remote_ssl_sock.close()
+        xlog.warn("do_unwrap_socks handoff for %s:%d fail:%r", host, port, e)
+        return
+
+    # PipeSocks 接管后，才解除旧请求对象对本地 socket 的关闭责任。
     req.rfile._close = False
     req.wfile._close = False
     req.connection = None
 
-    if not isinstance(sock, SocketWrap):
-        sock = SocketWrap(sock, client_address[0], client_address[1])
-
     xlog.info("host:%s:%d do_unwrap_socks", host, port)
-
-    remote_ssl_sock.send(left_buf)
-    sw = SocketWrap(remote_ssl_sock, "x-tunnel", port, host)
-    sock.recved_times = 3
-    g.pipe_socks.add_socks(sock, sw)
 
 
 def do_gae(sock, host, port, client_address, left_buf=""):
@@ -389,10 +446,15 @@ def try_loop(scense, rule_list, sock, host, port, client_address, left_buf=""):
 
                 try:
                     do_direct(sock, host, ips, port, client_address, left_buf)
+                except HandoffFail:
+                    # PipeSocks 已记录真实交接拒绝；不得重复计数或伪计 direct 成功。
+                    continue
                 except ConnectFail:
+                    metrics.increment("smart_router.direct_connect_failures_total")
                     continue
 
                 xlog.info("%s %s:%d forward to direct", scense, host, port)
+                metrics.increment("smart_router.route_direct_total")
                 return
 
             elif rule == "direct6":
@@ -403,8 +465,15 @@ def try_loop(scense, rule_list, sock, host, port, client_address, left_buf=""):
                 if not ips:
                     continue
                     
-                do_direct(sock, host, ips, port, client_address, left_buf)
+                try:
+                    do_direct(sock, host, ips, port, client_address, left_buf)
+                except HandoffFail:
+                    continue
+                except ConnectFail:
+                    metrics.increment("smart_router.direct_connect_failures_total")
+                    continue
                 xlog.info("%s %s:%d forward to direct6", scense, host, port)
+                metrics.increment("smart_router.route_direct_total")
                 return
 
             elif rule == "gae":
@@ -419,6 +488,7 @@ def try_loop(scense, rule_list, sock, host, port, client_address, left_buf=""):
                     # sni_host = get_sni(sock, left_buf)
                     # xlog.info("%s %s:%d try gae", scense, host, port)
                     do_gae(sock, host, port, client_address, left_buf)
+                    metrics.increment("smart_router.route_proxy_total")
                     return
                 except DontFakeCA:
                     continue
@@ -462,20 +532,24 @@ def try_loop(scense, rule_list, sock, host, port, client_address, left_buf=""):
                 else:
                     _sock = sock
                 do_socks(_sock, host, port, client_address, left_buf)
+                metrics.increment("smart_router.route_proxy_total")
                 return
             elif rule == "black":
                 xlog.info("%s to:%s:%d black", scense, host, port)
                 sock.close()
+                metrics.increment("smart_router.route_blocked_total")
                 return
             else:
                 xlog.error("%s %s:%d rule:%s unknown", scense, host, port, host, rule)
                 sock.close()
+                metrics.increment("smart_router.route_unknown_total")
                 return
         except Exception as e:
             xlog.exception("%s %s to %s:%d except:%r", scense, rule, host, port, e)
 
     xlog.warn("%s %s to %s:%d try_loop fail", scense, rule_list, host, port)
     sock.close()
+    metrics.increment("smart_router.route_unknown_total")
     return
 
 
