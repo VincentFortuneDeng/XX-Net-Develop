@@ -3,6 +3,7 @@ import sys
 import os
 
 from xlog import getLogger
+import runtime_state
 
 xlog = getLogger("launcher")
 
@@ -116,9 +117,12 @@ elif sys.platform == "darwin":
     def show_systray():
         try:
             import mac_tray as sys_tray
+            runtime_state.record_tray_backend("native")
         except Exception as e:
             xlog.warn("import mac_tray except:%r, Please try run 'sudo pip3 install -U PyObjC Pillow' by yourself.", e)
             from non_tray import sys_tray
+            runtime_state.record_tray_backend("fallback")
+        runtime_state.record_tray_started()
         sys_tray.serve_forever()
 
     def on_quit():

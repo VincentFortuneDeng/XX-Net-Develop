@@ -10,6 +10,8 @@ import web_control
 import time
 
 proc_handler = {}
+_module_control_locks = {}
+_module_control_locks_guard = threading.Lock()
 
 xargs = {}
 
@@ -23,7 +25,18 @@ data_launcher_path = os.path.join(env_info.data_path, 'launcher')
 running_file = os.path.join(data_launcher_path, "Running.Lck")
 
 
+def _get_module_control_lock(module):
+    with _module_control_locks_guard:
+        return _module_control_locks.setdefault(module, threading.RLock())
+
+
 def start(module):
+    # 同一模块的启动、停止和注册表发布必须串行；不同模块仍可独立控制。
+    with _get_module_control_lock(module):
+        return _start(module)
+
+
+def _start(module):
     if module == "all":
         modules = ["gae_proxy", "smart_router", "x_tunnel"]
         for m in modules:
@@ -53,13 +66,35 @@ def start(module):
                 proc_handler[module]["imp"] = __import__(module, globals(), locals(), ['local'], 0)
 
             _local = proc_handler[module]["imp"].local
-            p = threading.Thread(target=_local.start, args=([xargs]), name="%s_start" % module)
+            state = proc_handler[module]
+            state["start_error"] = None
+
+            def run_module():
+                try:
+                    _local.start(xargs)
+                except Exception as e:
+                    state["start_error"] = e
+                    xlog.exception("module %s background start fail:%s", module, e)
+                    try:
+                        _local.stop()
+                    except Exception as stop_error:
+                        xlog.exception("module %s rollback fail:%s", module, stop_error)
+
+            p = threading.Thread(target=run_module, name="%s_start" % module)
             p.daemon = True
-            p.start()
             proc_handler[module]["proc"] = p
+            p.start()
 
             while not _local.is_ready():
+                if state["start_error"] is not None or not p.is_alive():
+                    break
                 time.sleep(0.1)
+
+            p.join(1)
+            if state["start_error"] is not None or not _local.is_ready():
+                if proc_handler.get(module) is state:
+                    del proc_handler[module]
+                return "fail"
         else:
             script_path = os.path.join(root_path, module, 'start.py')
             if not os.path.isfile(script_path):
@@ -72,11 +107,17 @@ def start(module):
 
     except Exception as e:
         xlog.exception("start module %s fail:%s", module, e)
-        raise
+        proc_handler.pop(module, None)
+        return "fail"
     return "start success."
 
 
 def stop(module):
+    with _get_module_control_lock(module):
+        return _stop(module)
+
+
+def _stop(module):
     try:
         if module == "all":
             modules = list(proc_handler)
@@ -110,7 +151,8 @@ def stop(module):
 
 
 def call_each_module(api_name, args):
-    for module in proc_handler:
+    # 停止可并发删除模块；固定本次调用快照，单个模块消失由下方异常边界处理。
+    for module in list(proc_handler):
         try:
             apis = proc_handler[module]["imp"].local.apis
             if not hasattr(apis, api_name):

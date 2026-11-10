@@ -8,6 +8,7 @@ import shlex
 import filecmp
 import shutil
 import tempfile
+import threading
 
 current_path = os.path.dirname(os.path.abspath(__file__))
 bundled_helper_path = os.path.join(current_path, 'mac_helper')
@@ -33,6 +34,9 @@ import webbrowser
 
 from xlog import getLogger
 xlog = getLogger("launcher")
+
+quit_lock = threading.Lock()
+quit_started = False
 
 import objc
 import AppKit
@@ -212,16 +216,25 @@ class MacTrayObject(AppKit.NSObject):
         nc.addObserver_selector_name_object_(self, 'windowWillClose:', AppKit.NSWorkspaceWillPowerOffNotification, None)
 
     def windowWillClose_(self, notification):
-        executeResult = subprocess.check_output(['networksetup', '-listallnetworkservices'])
-        services = executeResult.split(b'\n')
-        services = [service for service in services if service and service.find(b'*') == -1 and getProxyState(
-            service) != 'disable']  # Remove disabled services and empty lines
+        global quit_started
+        with quit_lock:
+            if quit_started:
+                return
+            quit_started = True
 
-        if len(services) > 0:
-            self.disableProxy_(True)
+        try:
+            executeResult = subprocess.check_output(['networksetup', '-listallnetworkservices'])
+            services = executeResult.split(b'\n')
+            services = [service for service in services if service and service.find(b'*') == -1 and getProxyState(
+                service) != 'disable']  # Remove disabled services and empty lines
 
-        module_init.stop_all()
-        os._exit(0)
+            for service in services:
+                self.disableProxy_(True, service.decode('utf-8', errors='replace'))
+        finally:
+            try:
+                module_init.stop_all()
+            finally:
+                os._exit(0)
         AppKit.NSApp.terminate_(self)
 
     def config_(self, notification):
@@ -296,13 +309,15 @@ class MacTrayObject(AppKit.NSObject):
         config.save()
         self.updateStatusBarMenu()
 
-    def disableProxy_(self, is_quit=False):
+    def disableProxy_(self, is_quit=False, service=None):
+        if service is None:
+            service = currentService
         try:
-            helperDisableAutoProxy(currentService)
-            helperDisableGlobalProxy(currentService)
+            helperDisableAutoProxy(service)
+            helperDisableGlobalProxy(service)
         except:
-            disableAutoProxyCommand = getDisableAutoProxyCommand(currentService)
-            disableGlobalProxyCommand = getDisableGlobalProxyCommand(currentService)
+            disableAutoProxyCommand = getDisableAutoProxyCommand(service)
+            disableGlobalProxyCommand = getDisableGlobalProxyCommand(service)
             executeCommand = 'do shell script "%s;%s" with administrator privileges' % (
             disableAutoProxyCommand, disableGlobalProxyCommand)
 
@@ -313,7 +328,7 @@ class MacTrayObject(AppKit.NSObject):
             # in case "Disable proxy" trigger by menu, is_quit will be a {NSMenuItem}
             config.os_proxy_mode = "disable"
             config.save()
-        self.updateStatusBarMenu()
+            self.updateStatusBarMenu()
 
 
 def isHelperInstalled():

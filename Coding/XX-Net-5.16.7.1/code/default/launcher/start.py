@@ -65,6 +65,7 @@ import update
 import update_from_github
 import download_modules
 import global_var
+import runtime_state
 
 
 current_version = update_from_github.current_version()
@@ -160,6 +161,8 @@ def main():
             elif s == "-no_systray":
                 no_systray = 1
 
+    runtime_state.record_argv(sys.argv)
+
     if allow_remote or config.allow_remote_connect:
         xlog.info("start with allow remote connect.")
         module_init.xargs["allow_remote"] = 1
@@ -174,6 +177,8 @@ def main():
     else:
         restart_from_except = False
 
+    runtime_state.record_restart_from_except(restart_from_except)
+
     update.start()
     # put update before start all modules, generate uuid for x-tunnel.
 
@@ -185,7 +190,7 @@ def main():
         import webbrowser
         url = "http://localhost:%s/" % host_port
         xlog.debug("Popup %s on startup", url)
-        webbrowser.open(url)
+        runtime_state.record_page_open(webbrowser.open(url))
 
     if has_desktop:
         download_modules.start_download()
@@ -193,7 +198,9 @@ def main():
 
     if config.show_systray and not no_systray:
         sys_platform.show_systray()
+        runtime_state.record_tray_returned()
     else:
+        runtime_state.record_tray_disabled()
         while global_var.running:
             time.sleep(10)
 
