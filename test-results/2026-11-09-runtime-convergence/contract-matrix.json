@@ -1,0 +1,395 @@
+{
+  "schema_version": 1,
+  "cards": [
+    {
+      "id": "x-tunnel-download-recovery",
+      "group": "x_tunnel_download",
+      "intent": "合法协议窗口内的首、中、尾缺口可在原命令补达后按序完整交付；永久缺口和真实越界仍有界停止。",
+      "evidence_type": "original_red_green_plus_characterization",
+      "oracles": {
+        "normal": {
+          "tests": [
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_first_command_gap_allows_protocol_window_before_retry",
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_middle_command_gap_allows_protocol_window_before_retry",
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_tail_command_gap_recovers_ordered_data_then_eof",
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_multiple_conns_recover_legal_gaps_concurrently",
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_in_order_command_without_socket_does_not_deadlock"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/x-tunnel.log"
+        },
+        "target_exception": {
+          "tests": [
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_future_command_queue_has_a_byte_limit",
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_permanent_command_gap_expires_without_another_packet"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/x-tunnel.log"
+        },
+        "adjacent_exception": {
+          "tests": [
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_in_order_command_without_socket_does_not_deadlock",
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_tail_command_gap_recovers_ordered_data_then_eof"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/x-tunnel.log"
+        },
+        "recovery": {
+          "tests": [
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_first_command_gap_allows_protocol_window_before_retry",
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_middle_command_gap_allows_protocol_window_before_retry",
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_tail_command_gap_recovers_ordered_data_then_eof",
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_multiple_conns_recover_legal_gaps_concurrently"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/x-tunnel.log"
+        },
+        "stop_or_generation": {
+          "tests": [
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_permanent_command_gap_expires_without_another_packet",
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_stale_conn_stop_cannot_remove_reused_conn_id",
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_conditional_stop_and_reset_reject_stale_generation_and_conn",
+            "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_old_worker_does_not_consume_new_download_retry_budget"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/x-tunnel.log"
+        }
+      },
+      "tests": [
+        "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_first_command_gap_allows_protocol_window_before_retry",
+        "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_middle_command_gap_allows_protocol_window_before_retry",
+        "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_tail_command_gap_recovers_ordered_data_then_eof",
+        "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_multiple_conns_recover_legal_gaps_concurrently",
+        "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_in_order_command_without_socket_does_not_deadlock",
+        "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_future_command_queue_has_a_byte_limit",
+        "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_permanent_command_gap_expires_without_another_packet",
+        "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_stale_conn_stop_cannot_remove_reused_conn_id",
+        "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_conditional_stop_and_reset_reject_stale_generation_and_conn",
+        "tests/test_x_tunnel_memory_backpressure.py::MemoryBackpressureTest.test_old_worker_does_not_consume_new_download_retry_budget"
+      ],
+      "metrics": [
+        "x_tunnel.active_conns",
+        "x_tunnel.active_transfers",
+        "x_tunnel.inflight_requests",
+        "x_tunnel.upload_bytes_total",
+        "x_tunnel.download_bytes_total",
+        "x_tunnel.send_buffer_bytes",
+        "x_tunnel.conn_send_buffer_bytes",
+        "x_tunnel.cmd_queue_bytes",
+        "x_tunnel.cmd_queue_window_ratio",
+        "x_tunnel.cmd_queue_gap_age_seconds",
+        "x_tunnel.command_gaps_total",
+        "x_tunnel.command_gap_recovered_total",
+        "x_tunnel.sn_retries_total",
+        "x_tunnel.slow_roundtrips_total",
+        "x_tunnel.timeout_roundtrips_total",
+        "x_tunnel.command_queue_overflow_total",
+        "x_tunnel.command_gap_timeout_total",
+        "x_tunnel.peer_close_total",
+        "x_tunnel.network_errors_total",
+        "x_tunnel.generation_stops_total"
+      ],
+      "production_level": "E0",
+      "uncovered": [
+        "真实默认启动与生产下载探针由 Task 6 判定，当前不据此声称 E2。",
+        "真实外部服务器的强制乱序注入未执行，E0 socketpair 与真实 Conn 覆盖协议状态机而非外部网络概率。"
+      ]
+    },
+    {
+      "id": "dns-deadline-generation-routing",
+      "group": "dns_routing",
+      "intent": "DNS 全调用使用有界剩余期限，旧代和迟到结果不能覆盖新缓存；空结果、回退和路由选择保持独立语义。",
+      "evidence_type": "characterization",
+      "oracles": {
+        "normal": {
+          "tests": [
+            "tests/test_dns_query_history_isolation.py::DnsQueryHistoryIsolationTest.test_repeated_top_level_alias_query_resolves_again",
+            "tests/test_dns_transport.py::DnsHttpsOwnershipTest.test_doh_noncycle_cname_succeeds"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/dns.log"
+        },
+        "target_exception": {
+          "tests": [
+            "tests/test_dns_transport.py::LocalAndCombinedDnsTest.test_local_query_honors_caller_timeout",
+            "tests/test_dns_response_ownership.py::DnsOwnershipTest.test_udp_wait_uses_remaining_budget_after_multiple_sends",
+            "tests/test_dns_transport.py::DnsTcpTransportTest.test_timeout_closes_checked_out_socket"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/dns.log"
+        },
+        "adjacent_exception": {
+          "tests": [
+            "tests/test_dns_transport.py::DnsTcpTransportTest.test_invalid_dns_payload_closes_checked_out_socket",
+            "tests/test_dns_response_ownership.py::DnsOwnershipTest.test_udp_rejects_mismatched_response_metadata_and_rr",
+            "tests/test_dns_transport.py::LocalAndCombinedDnsTest.test_fallbacks_preserve_aaaa_query_type"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/dns.log"
+        },
+        "recovery": {
+          "tests": [
+            "tests/test_dns_transport.py::DnsHttpsOwnershipTest.test_expired_pool_close_failure_does_not_block_new_connection",
+            "tests/test_dns_query_history_isolation.py::LateParallelResultTest.test_clean_invalidates_old_parallel_worker_but_allows_new_write",
+            "tests/test_dns_response_ownership.py::DnsOwnershipTest.test_udp_alias_is_followed_by_calling_thread"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/dns.log"
+        },
+        "stop_or_generation": {
+          "tests": [
+            "tests/test_dns_query_history_isolation.py::LateParallelResultTest.test_timed_out_generation_cannot_overwrite_newer_query_cache",
+            "tests/test_dns_response_ownership.py::DnsOwnershipTest.test_late_response_after_timeout_is_not_delivered",
+            "tests/test_dns_transport.py::DnsHttpsOwnershipTest.test_parallel_tcp_success_pool_has_capacity_and_stop_closes_all"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/dns.log"
+        }
+      },
+      "tests": [
+        "tests/test_dns_query_history_isolation.py::DnsQueryHistoryIsolationTest.test_repeated_top_level_alias_query_resolves_again",
+        "tests/test_dns_transport.py::DnsHttpsOwnershipTest.test_doh_noncycle_cname_succeeds",
+        "tests/test_dns_transport.py::LocalAndCombinedDnsTest.test_local_query_honors_caller_timeout",
+        "tests/test_dns_response_ownership.py::DnsOwnershipTest.test_udp_wait_uses_remaining_budget_after_multiple_sends",
+        "tests/test_dns_transport.py::DnsTcpTransportTest.test_timeout_closes_checked_out_socket",
+        "tests/test_dns_transport.py::DnsTcpTransportTest.test_invalid_dns_payload_closes_checked_out_socket",
+        "tests/test_dns_response_ownership.py::DnsOwnershipTest.test_udp_rejects_mismatched_response_metadata_and_rr",
+        "tests/test_dns_transport.py::LocalAndCombinedDnsTest.test_fallbacks_preserve_aaaa_query_type",
+        "tests/test_dns_transport.py::DnsHttpsOwnershipTest.test_expired_pool_close_failure_does_not_block_new_connection",
+        "tests/test_dns_query_history_isolation.py::LateParallelResultTest.test_clean_invalidates_old_parallel_worker_but_allows_new_write",
+        "tests/test_dns_response_ownership.py::DnsOwnershipTest.test_udp_alias_is_followed_by_calling_thread",
+        "tests/test_dns_query_history_isolation.py::LateParallelResultTest.test_timed_out_generation_cannot_overwrite_newer_query_cache",
+        "tests/test_dns_response_ownership.py::DnsOwnershipTest.test_late_response_after_timeout_is_not_delivered",
+        "tests/test_dns_transport.py::DnsHttpsOwnershipTest.test_parallel_tcp_success_pool_has_capacity_and_stop_closes_all"
+      ],
+      "metrics": [
+        "dns.queries_total",
+        "dns.complete_results_total",
+        "dns.empty_results_total",
+        "dns.timeouts_total",
+        "dns.latency_seconds_total",
+        "dns.generation_drops_total",
+        "dns.cache_commit_rejected_total",
+        "dns.cache_entries",
+        "dns.cache_capacity",
+        "dns.cache_epoch",
+        "smart_router.route_direct_total",
+        "smart_router.route_proxy_total",
+        "smart_router.route_unknown_total"
+      ],
+      "production_level": "E0",
+      "uncovered": [
+        "外部 DNS 与系统解析的实际网络成功率由 Task 6 固定探针观察，不用离线结果替代。",
+        "NS 全局 single-flight 的既有契约由完整回归另行覆盖，本卡不改变该语义。"
+      ]
+    },
+    {
+      "id": "front-http-deadline-ownership",
+      "group": "front_http",
+      "intent": "Front 与独立 Client 共享原始期限，完整读、重试、socket 所有权、H2 stream 和晚到事件互不混淆。",
+      "evidence_type": "characterization",
+      "oracles": {
+        "normal": {
+          "tests": [
+            "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_standalone_client_second_request_reuses_completed_connection",
+            "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_known_length_read_all_is_complete_before_worker_finish"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/front.log"
+        },
+        "target_exception": {
+          "tests": [
+            "tests/test_front_request_deadline.py::FrontRequestDeadlineTest.test_incomplete_200_at_deadline_returns_internal_failure",
+            "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_standalone_client_incomplete_body_closes_cached_socket",
+            "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_body_chunks_share_original_absolute_deadline"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/front.log"
+        },
+        "adjacent_exception": {
+          "tests": [
+            "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_h2_rst_stream_does_not_close_shared_connection",
+            "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_h2_no_body_stream_rejects_data",
+            "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_h1_upgrade_response_is_not_reused_as_normal_empty_body"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/front.log"
+        },
+        "recovery": {
+          "tests": [
+            "tests/test_front_request_deadline.py::FrontRequestDeadlineTest.test_retry_success_still_respects_total_deadline",
+            "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_standalone_client_retries_partial_header_send",
+            "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_h2_close_after_registration_can_retry_previous_attempt"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/front.log"
+        },
+        "stop_or_generation": {
+          "tests": [
+            "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_h2_old_attempt_cannot_deliver_final_response",
+            "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_dispatcher_late_worker_is_closed_after_stop",
+            "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_h1_old_attempt_stops_before_next_socket_send"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/front.log"
+        }
+      },
+      "tests": [
+        "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_standalone_client_second_request_reuses_completed_connection",
+        "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_known_length_read_all_is_complete_before_worker_finish",
+        "tests/test_front_request_deadline.py::FrontRequestDeadlineTest.test_incomplete_200_at_deadline_returns_internal_failure",
+        "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_standalone_client_incomplete_body_closes_cached_socket",
+        "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_body_chunks_share_original_absolute_deadline",
+        "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_h2_rst_stream_does_not_close_shared_connection",
+        "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_h2_no_body_stream_rejects_data",
+        "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_h1_upgrade_response_is_not_reused_as_normal_empty_body",
+        "tests/test_front_request_deadline.py::FrontRequestDeadlineTest.test_retry_success_still_respects_total_deadline",
+        "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_standalone_client_retries_partial_header_send",
+        "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_h2_close_after_registration_can_retry_previous_attempt",
+        "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_h2_old_attempt_cannot_deliver_final_response",
+        "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_dispatcher_late_worker_is_closed_after_stop",
+        "tests/test_front_body_deadline.py::FrontBodyDeadlineTest.test_h1_old_attempt_stops_before_next_socket_send"
+      ],
+      "metrics": [
+        "front.by_type"
+      ],
+      "production_level": "E0",
+      "uncovered": [
+        "真实公网 RTT、外部 peer 和长期趋势由 Task 6 的短窗口及后续长期设计观察。",
+        "front.by_type 只使用固定协议类别，不证明每个真实目标的可达性。"
+      ]
+    },
+    {
+      "id": "smart-router-handoff-pipe-lifecycle",
+      "group": "smart_router_pipe",
+      "intent": "连接交接前后只有一个明确所有者；失败回滚完整，PipeSocks 背压和停止不遗留 socket，模块可受控重启。",
+      "evidence_type": "characterization",
+      "oracles": {
+        "normal": {
+          "tests": [
+            "tests/test_smart_router_handoff.py::SmartRouterHandoffTest.test_direct_sendall_forwards_entire_prefix",
+            "tests/test_smart_router_handoff.py::SmartRouterHandoffTest.test_unwrap_transfers_buffered_request_body_after_headers"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/smart-router-pipe.log"
+        },
+        "target_exception": {
+          "tests": [
+            "tests/test_smart_router_handoff.py::SmartRouterHandoffTest.test_redirect_tls_wrap_failure_closes_remote",
+            "tests/test_smart_router_handoff.py::SmartRouterHandoffTest.test_direct_publish_failure_closes_remote"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/smart-router-pipe.log"
+        },
+        "adjacent_exception": {
+          "tests": [
+            "tests/test_pipe_socks_condition_race.py::PipeSocksConditionRaceTest.test_registration_failure_rolls_back_whole_pair",
+            "tests/test_pipe_socks_condition_race.py::PipeSocksConditionRaceTest.test_select_failure_makes_pipe_unpublishable_and_cleans_membership",
+            "tests/test_pipe_socks_condition_race.py::PipeSocksConditionRaceTest.test_buffered_payload_closes_pair_when_write_registration_fails"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/smart-router-pipe.log"
+        },
+        "recovery": {
+          "tests": [
+            "tests/test_module_lifecycle.py::LauncherLifecycleTest.test_x_tunnel_toggle_restarts_running_smart_router"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/smart-router-pipe.log"
+        },
+        "stop_or_generation": {
+          "tests": [
+            "tests/test_pipe_socks_condition_race.py::PipeSocksConditionRaceTest.test_stopped_pipe_rejects_and_closes_new_pair",
+            "tests/test_pipe_socks_condition_race.py::PipeSocksConditionRaceTest.test_select_oserror_also_stops_and_cleans_membership"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/smart-router-pipe.log"
+        }
+      },
+      "tests": [
+        "tests/test_smart_router_handoff.py::SmartRouterHandoffTest.test_direct_sendall_forwards_entire_prefix",
+        "tests/test_smart_router_handoff.py::SmartRouterHandoffTest.test_unwrap_transfers_buffered_request_body_after_headers",
+        "tests/test_smart_router_handoff.py::SmartRouterHandoffTest.test_redirect_tls_wrap_failure_closes_remote",
+        "tests/test_smart_router_handoff.py::SmartRouterHandoffTest.test_direct_publish_failure_closes_remote",
+        "tests/test_pipe_socks_condition_race.py::PipeSocksConditionRaceTest.test_registration_failure_rolls_back_whole_pair",
+        "tests/test_pipe_socks_condition_race.py::PipeSocksConditionRaceTest.test_select_failure_makes_pipe_unpublishable_and_cleans_membership",
+        "tests/test_pipe_socks_condition_race.py::PipeSocksConditionRaceTest.test_buffered_payload_closes_pair_when_write_registration_fails",
+        "tests/test_module_lifecycle.py::LauncherLifecycleTest.test_x_tunnel_toggle_restarts_running_smart_router",
+        "tests/test_pipe_socks_condition_race.py::PipeSocksConditionRaceTest.test_stopped_pipe_rejects_and_closes_new_pair",
+        "tests/test_pipe_socks_condition_race.py::PipeSocksConditionRaceTest.test_select_oserror_also_stops_and_cleans_membership"
+      ],
+      "metrics": [
+        "smart_router.route_direct_total",
+        "smart_router.route_proxy_total",
+        "smart_router.route_blocked_total",
+        "smart_router.route_unknown_total",
+        "smart_router.handoff_failures_total",
+        "smart_router.pipe_read_sockets",
+        "smart_router.pipe_write_sockets",
+        "smart_router.pipe_write_buffer_bytes",
+        "smart_router.pipe_controlled_closes_total"
+      ],
+      "production_level": "E0",
+      "uncovered": [
+        "单次失败连接按协议关闭，不声称原连接原地恢复；恢复证据仅覆盖新模块代际。",
+        "真实目标 Host、对端地址和多阶段外部网络故障不采集，由固定生产探针只记录结果分类。"
+      ]
+    },
+    {
+      "id": "launcher-default-startup-desktop-exit",
+      "group": "launcher",
+      "intent": "默认启动、监听就绪、模块启停、托盘降级与退出幂等保持真实资源清理；无界面测试不得外推为完整桌面通过。",
+      "evidence_type": "characterization",
+      "oracles": {
+        "normal": {
+          "tests": [
+            "tests/test_module_lifecycle.py::ListenerStartupTest.test_gae_healthy_listener_still_serves",
+            "tests/test_module_lifecycle.py::ListenerStartupTest.test_x_tunnel_healthy_listener_still_serves",
+            "tests/test_mac_tray_quit.py::MacTrayQuitTest.test_normal_menu_disable_still_saves_and_updates_ui"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/launcher.log"
+        },
+        "target_exception": {
+          "tests": [
+            "tests/test_module_lifecycle.py::LauncherLifecycleTest.test_background_start_failure_is_returned_and_retryable",
+            "tests/test_module_lifecycle.py::ListenerStartupTest.test_x_tunnel_all_ports_failed_never_ready_or_serves",
+            "tests/test_mac_tray_quit.py::MacTrayQuitTest.test_admin_refusal_still_stops_headless_process"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/launcher.log"
+        },
+        "adjacent_exception": {
+          "tests": [
+            "tests/test_module_lifecycle.py::DnsServerLifecycleTest.test_dns_without_listener_raises_and_closes_every_socket",
+            "tests/test_module_lifecycle.py::DirectFrontLifecycleTest.test_direct_front_stop_cannot_miss_gated_dispatcher_creation",
+            "tests/test_mac_tray_quit.py::MacTrayQuitTest.test_headless_quit_uses_detected_service_without_admin_or_ui"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/launcher.log"
+        },
+        "recovery": {
+          "tests": [
+            "tests/test_module_lifecycle.py::LauncherLifecycleTest.test_background_start_failure_is_returned_and_retryable",
+            "tests/test_module_lifecycle.py::LauncherLifecycleTest.test_x_tunnel_toggle_restarts_running_smart_router",
+            "tests/test_module_lifecycle.py::DirectFrontLifecycleTest.test_running_direct_front_reuses_dispatcher_and_serves_request"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/launcher.log"
+        },
+        "stop_or_generation": {
+          "tests": [
+            "tests/test_module_lifecycle.py::LauncherLifecycleTest.test_stop_during_start_cannot_leave_unregistered_ready_module",
+            "tests/test_module_lifecycle.py::LauncherLifecycleTest.test_web_control_stop_before_server_creation_is_a_noop",
+            "tests/test_mac_tray_quit.py::MacTrayQuitTest.test_duplicate_quit_does_not_repeat_proxy_cleanup",
+            "tests/test_mac_tray_quit.py::MacTrayQuitTest.test_concurrent_quit_during_authorization_does_not_prompt_again"
+          ],
+          "result_log": "test-results/2026-11-09-runtime-convergence/launcher.log"
+        }
+      },
+      "tests": [
+        "tests/test_module_lifecycle.py::ListenerStartupTest.test_gae_healthy_listener_still_serves",
+        "tests/test_module_lifecycle.py::ListenerStartupTest.test_x_tunnel_healthy_listener_still_serves",
+        "tests/test_mac_tray_quit.py::MacTrayQuitTest.test_normal_menu_disable_still_saves_and_updates_ui",
+        "tests/test_module_lifecycle.py::LauncherLifecycleTest.test_background_start_failure_is_returned_and_retryable",
+        "tests/test_module_lifecycle.py::ListenerStartupTest.test_x_tunnel_all_ports_failed_never_ready_or_serves",
+        "tests/test_mac_tray_quit.py::MacTrayQuitTest.test_admin_refusal_still_stops_headless_process",
+        "tests/test_module_lifecycle.py::DnsServerLifecycleTest.test_dns_without_listener_raises_and_closes_every_socket",
+        "tests/test_module_lifecycle.py::DirectFrontLifecycleTest.test_direct_front_stop_cannot_miss_gated_dispatcher_creation",
+        "tests/test_mac_tray_quit.py::MacTrayQuitTest.test_headless_quit_uses_detected_service_without_admin_or_ui",
+        "tests/test_module_lifecycle.py::LauncherLifecycleTest.test_x_tunnel_toggle_restarts_running_smart_router",
+        "tests/test_module_lifecycle.py::DirectFrontLifecycleTest.test_running_direct_front_reuses_dispatcher_and_serves_request",
+        "tests/test_module_lifecycle.py::LauncherLifecycleTest.test_stop_during_start_cannot_leave_unregistered_ready_module",
+        "tests/test_module_lifecycle.py::LauncherLifecycleTest.test_web_control_stop_before_server_creation_is_a_noop",
+        "tests/test_mac_tray_quit.py::MacTrayQuitTest.test_duplicate_quit_does_not_repeat_proxy_cleanup",
+        "tests/test_mac_tray_quit.py::MacTrayQuitTest.test_concurrent_quit_during_authorization_does_not_prompt_again"
+      ],
+      "metrics": [],
+      "manual_evidence": [
+        "真实默认 ./start、页面打开请求、托盘 backend 和正常退出只能由 Task 6 的 E2/E3 事实判定。",
+        "当前矩阵只闭合 E0 生命周期与替身测试，不声称真实菜单已点击或完整桌面通过。"
+      ],
+      "production_level": "E0",
+      "uncovered": [
+        "E2 默认真实启动和 E3 真实菜单/正常退出尚未执行。",
+        "真实密码授权、提权、系统代理和其他系统设置不进入本轮自动操作。"
+      ]
+    }
+  ]
+}

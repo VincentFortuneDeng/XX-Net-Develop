@@ -1,0 +1,266 @@
+WARNING:root:Load Crypto.Cipher.ARC4 Failed, Use Pure Python Instead.
+test_ack_recovery_after_final_checker_lock_prevents_reset (__main__.MemoryBackpressureTest.test_ack_recovery_after_final_checker_lock_prevents_reset) ... 2026-11-09 13:09:56.108 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:56.108 [x_tunnel][WARNING] session backpressure exceeded ACK timeout, resetting
+ok
+test_ack_recovery_between_checker_locks_prevents_reset (__main__.MemoryBackpressureTest.test_ack_recovery_between_checker_locks_prevents_reset) ... 2026-11-09 13:09:56.108 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_balance_commit_cannot_cross_real_client_stop (__main__.MemoryBackpressureTest.test_balance_commit_cannot_cross_real_client_stop) ... 2026-11-09 13:09:57.113 [x_tunnel][INFO] update xt_server old-response:443
+2026-11-09 13:09:57.114 [x_tunnel][INFO] request_balance host:old-response port:443 balance:1.000000 quota:123.000000
+ok
+test_caller_conn_credential_rejects_reused_id_for_start_and_stop (__main__.MemoryBackpressureTest.test_caller_conn_credential_rejects_reused_id_for_start_and_stop) ... 2026-11-09 13:09:57.115 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_conditional_stop_and_reset_reject_stale_generation_and_conn (__main__.MemoryBackpressureTest.test_conditional_stop_and_reset_reject_stale_generation_and_conn) ... 2026-11-09 13:09:57.115 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_conn_removal_cannot_invalidate_backpressure_snapshot (__main__.MemoryBackpressureTest.test_conn_removal_cannot_invalidate_backpressure_snapshot) ... 2026-11-09 13:09:57.115 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_conn_transfers_carry_identity_and_stale_conn_cannot_append (__main__.MemoryBackpressureTest.test_conn_transfers_carry_identity_and_stale_conn_cannot_append) ... 2026-11-09 13:09:57.176 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.177 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_connected_target_socket_switches_to_nonblocking_io (__main__.MemoryBackpressureTest.test_connected_target_socket_switches_to_nonblocking_io) ... 2026-11-09 13:09:57.177 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_connection_ack_does_not_override_session_pause (__main__.MemoryBackpressureTest.test_connection_ack_does_not_override_session_pause) ... 2026-11-09 13:09:57.179 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_create_conn_does_not_update_new_generation_schedule (__main__.MemoryBackpressureTest.test_create_conn_does_not_update_new_generation_schedule) ... 2026-11-09 13:09:57.179 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_create_conn_frame_cannot_cross_into_reused_conn_id (__main__.MemoryBackpressureTest.test_create_conn_frame_cannot_cross_into_reused_conn_id) ... 2026-11-09 13:09:57.179 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_create_conn_returns_caller_credential_when_requested (__main__.MemoryBackpressureTest.test_create_conn_returns_caller_credential_when_requested) ... 2026-11-09 13:09:57.180 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_create_conn_send_failure_removes_unstarted_conn (__main__.MemoryBackpressureTest.test_create_conn_send_failure_removes_unstarted_conn) ... 2026-11-09 13:09:57.180 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.180 [x_tunnel][DEBUG] Conn session:test-session example.com:443 conn:2 fd:10 stop:create_conn_fail
+ok
+test_create_conn_waits_for_start_before_enabling_local_read (__main__.MemoryBackpressureTest.test_create_conn_waits_for_start_before_enabling_local_read) ... 2026-11-09 13:09:57.181 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_encrypt_failure_releases_registered_on_road (__main__.MemoryBackpressureTest.test_encrypt_failure_releases_registered_on_road) ... 2026-11-09 13:09:57.181 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.181 [x_tunnel][ERROR] prepare roundtrip request failed:RuntimeError('encrypt failed')
+2026-11-09 13:09:57.186 [x_tunnel][ERROR] Except stack:Traceback (most recent call last):
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/proxy_session.py", line 1125, in roundtrip_task
+    upload_post_data = encrypt_data(upload_post_data)
+  File "/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/lib/python3.15/unittest/mock.py", line 1176, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/lib/python3.15/unittest/mock.py", line 1180, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/lib/python3.15/unittest/mock.py", line 1241, in _execute_mock_call
+    raise effect
+RuntimeError: encrypt failed
+
+ok
+test_exiting_roundtrip_worker_installs_replacement_while_running (__main__.MemoryBackpressureTest.test_exiting_roundtrip_worker_installs_replacement_while_running) ... 2026-11-09 13:09:57.186 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.187 [x_tunnel][INFO] roundtrip thread 0 exit
+ok
+test_first_command_gap_allows_protocol_window_before_retry (__main__.MemoryBackpressureTest.test_first_command_gap_allows_protocol_window_before_retry) ... 2026-11-09 13:09:57.187 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_first_register_failure_cleans_unmapped_conn (__main__.MemoryBackpressureTest.test_first_register_failure_cleans_unmapped_conn) ... ok
+test_future_command_queue_has_a_byte_limit (__main__.MemoryBackpressureTest.test_future_command_queue_has_a_byte_limit) ... 2026-11-09 13:09:57.189 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_https_reply_failure_stops_created_conn_without_start (__main__.MemoryBackpressureTest.test_https_reply_failure_stops_created_conn_without_start) ... 2026-11-09 13:09:57.189 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.190 [x_tunnel][INFO] https ('127.0.0.1', 12345) connect to example.com:443 conn:1
+2026-11-09 13:09:57.190 [x_tunnel][WARNING] https ('127.0.0.1', 12345) connect to example.com:443 conn:1 closed:OSError('reply failed')
+ok
+test_in_order_command_without_socket_does_not_deadlock (__main__.MemoryBackpressureTest.test_in_order_command_without_socket_does_not_deadlock) ... 2026-11-09 13:09:57.190 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_late_connect_result_is_closed_after_conn_stop (__main__.MemoryBackpressureTest.test_late_connect_result_is_closed_after_conn_stop) ... 2026-11-09 13:09:57.191 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_middle_command_gap_allows_protocol_window_before_retry (__main__.MemoryBackpressureTest.test_middle_command_gap_allows_protocol_window_before_retry) ... 2026-11-09 13:09:57.191 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_module_stop_during_internal_login_cannot_finish_session_start (__main__.MemoryBackpressureTest.test_module_stop_during_internal_login_cannot_finish_session_start) ... 2026-11-09 13:09:57.193 [x_tunnel][WARNING] x-tunnel session start cancelled after login
+ok
+test_multiple_conns_recover_legal_gaps_concurrently (__main__.MemoryBackpressureTest.test_multiple_conns_recover_legal_gaps_concurrently) ... 2026-11-09 13:09:57.194 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_nonblocking_write_buffers_would_block_without_closing (__main__.MemoryBackpressureTest.test_nonblocking_write_buffers_would_block_without_closing) ... 2026-11-09 13:09:57.197 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_old_login_cannot_start_replaced_or_stopped_session (__main__.MemoryBackpressureTest.test_old_login_cannot_start_replaced_or_stopped_session) ... 2026-11-09 13:09:57.197 [x_tunnel][DEBUG] session not running, try login..
+2026-11-09 13:09:57.197 [x_tunnel][DEBUG] session not running, try login..
+ok
+test_old_pipe_worker_cleanup_preserves_concurrently_added_conn (__main__.MemoryBackpressureTest.test_old_pipe_worker_cleanup_preserves_concurrently_added_conn) ... ok
+test_old_roundtrip_and_pipe_finally_preserve_replacement_threads (__main__.MemoryBackpressureTest.test_old_roundtrip_and_pipe_finally_preserve_replacement_threads) ... 2026-11-09 13:09:57.333 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.333 [x_tunnel][INFO] roundtrip thread 0 exit
+ok
+test_old_upload_worker_cannot_consume_new_generation_send_buffer (__main__.MemoryBackpressureTest.test_old_upload_worker_cannot_consume_new_generation_send_buffer) ... 2026-11-09 13:09:57.333 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_old_worker_does_not_consume_new_download_retry_budget (__main__.MemoryBackpressureTest.test_old_worker_does_not_consume_new_download_retry_budget) ... 2026-11-09 13:09:57.333 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_permanent_ack_stall_eventually_resets_session (__main__.MemoryBackpressureTest.test_permanent_ack_stall_eventually_resets_session) ... 2026-11-09 13:09:57.333 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.334 [x_tunnel][WARNING] session backpressure exceeded ACK timeout, resetting
+ok
+test_permanent_command_gap_expires_without_another_packet (__main__.MemoryBackpressureTest.test_permanent_command_gap_expires_without_another_packet) ... 2026-11-09 13:09:57.334 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_pipe_drops_stale_read_and_write_events (__main__.MemoryBackpressureTest.test_pipe_drops_stale_read_and_write_events) ... ok
+test_pipe_register_failure_cleans_outside_lock_and_preserves_new_mapping (__main__.MemoryBackpressureTest.test_pipe_register_failure_cleans_outside_lock_and_preserves_new_mapping) ... ok
+test_pipe_restart_before_old_conn_stop_unregisters_old_socket (__main__.MemoryBackpressureTest.test_pipe_restart_before_old_conn_stop_unregisters_old_socket) ... ok
+test_quota_loop_exits_when_session_object_is_replaced (__main__.MemoryBackpressureTest.test_quota_loop_exits_when_session_object_is_replaced) ... 2026-11-09 13:09:57.334 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.334 [x_tunnel][DEBUG] update_quota_loop start.
+2026-11-09 13:09:57.334 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.334 [x_tunnel][WARNING] update_quota_loop timeout fail.
+ok
+test_real_conn_register_failure_never_deadlocks_in_cleanup (__main__.MemoryBackpressureTest.test_real_conn_register_failure_never_deadlocks_in_cleanup) ... ok
+test_remote_data_waits_for_protocol_start_then_flushes (__main__.MemoryBackpressureTest.test_remote_data_waits_for_protocol_start_then_flushes) ... 2026-11-09 13:09:57.335 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_report_response_cannot_cross_real_client_stop (__main__.MemoryBackpressureTest.test_report_response_cannot_cross_real_client_stop) ... 2026-11-09 13:09:57.335 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.336 [x_tunnel][DEBUG] start report_stat
+ok
+test_report_response_commits_to_current_generation (__main__.MemoryBackpressureTest.test_report_response_commits_to_current_generation) ... 2026-11-09 13:09:57.336 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.336 [x_tunnel][DEBUG] start report_stat
+ok
+test_reporter_exits_on_object_replacement_but_survives_same_object_reset (__main__.MemoryBackpressureTest.test_reporter_exits_on_object_replacement_but_survives_same_object_reset) ... 2026-11-09 13:09:57.336 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.336 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.336 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_reset_callbacks_and_conn_start_do_not_invert_pipe_session_locks (__main__.MemoryBackpressureTest.test_reset_callbacks_and_conn_start_do_not_invert_pipe_session_locks) ... 2026-11-09 13:09:57.336 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_reset_serializes_registration_without_losing_new_mapping (__main__.MemoryBackpressureTest.test_reset_serializes_registration_without_losing_new_mapping) ... ok
+test_restart_replaces_alive_but_exiting_timeout_checker (__main__.MemoryBackpressureTest.test_restart_replaces_alive_but_exiting_timeout_checker) ... 2026-11-09 13:09:57.337 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.337 [x_tunnel][INFO] session started.
+2026-11-09 13:09:57.337 [x_tunnel][INFO] start close all connection
+2026-11-09 13:09:57.337 [x_tunnel][DEBUG] stop all connection finished
+2026-11-09 13:09:57.337 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:57.337 [x_tunnel][INFO] WaitQueue stop
+2026-11-09 13:09:57.337 [x_tunnel][INFO] WaitQueue stop finished
+2026-11-09 13:09:57.337 [x_tunnel][DEBUG] session stopped.
+ok
+test_restart_replaces_stopped_wait_queue (__main__.MemoryBackpressureTest.test_restart_replaces_stopped_wait_queue) ... 2026-11-09 13:09:58.347 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:58.348 [x_tunnel][INFO] session started.
+2026-11-09 13:09:58.348 [x_tunnel][INFO] start close all connection
+2026-11-09 13:09:58.348 [x_tunnel][DEBUG] stop all connection finished
+2026-11-09 13:09:58.348 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:58.348 [x_tunnel][INFO] WaitQueue stop
+2026-11-09 13:09:58.348 [x_tunnel][INFO] WaitQueue stop finished
+2026-11-09 13:09:58.348 [x_tunnel][DEBUG] session stopped.
+2026-11-09 13:09:58.348 [x_tunnel][INFO] session started.
+2026-11-09 13:09:58.348 [x_tunnel][INFO] start close all connection
+2026-11-09 13:09:58.348 [x_tunnel][DEBUG] stop all connection finished
+2026-11-09 13:09:58.348 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:58.348 [x_tunnel][INFO] WaitQueue stop
+2026-11-09 13:09:58.348 [x_tunnel][INFO] WaitQueue stop finished
+2026-11-09 13:09:58.348 [x_tunnel][DEBUG] session stopped.
+ok
+test_same_generation_balance_requests_cannot_commit_out_of_order (__main__.MemoryBackpressureTest.test_same_generation_balance_requests_cannot_commit_out_of_order) ... 2026-11-09 13:09:59.355 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:59.762 [x_tunnel][INFO] update xt_server 1-server:443
+2026-11-09 13:09:59.762 [x_tunnel][INFO] request_balance host:1-server port:443 balance:1.000000 quota:123.000000
+2026-11-09 13:09:59.763 [x_tunnel][INFO] update xt_server 2-server:443
+2026-11-09 13:09:59.763 [x_tunnel][INFO] request_balance host:2-server port:443 balance:2.000000 quota:123.000000
+ok
+test_server_side_conn_still_enables_read_after_connect (__main__.MemoryBackpressureTest.test_server_side_conn_still_enables_read_after_connect) ... 2026-11-09 13:09:59.763 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_small_buffer_flush_uses_monotonic_time (__main__.MemoryBackpressureTest.test_small_buffer_flush_uses_monotonic_time) ... 2026-11-09 13:09:59.764 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_socks4_reply_failure_stops_created_conn (__main__.MemoryBackpressureTest.test_socks4_reply_failure_stops_created_conn) ... 2026-11-09 13:09:59.765 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:59.765 [x_tunnel][INFO] Socks4:('127.0.0.1', 12345) to 127.0.0.1:80, conn:1
+2026-11-09 13:09:59.765 [x_tunnel][WARNING] Socks4 ('127.0.0.1', 12345) connect to 127.0.0.1:80 conn:1 closed:OSError('reply failed')
+ok
+test_socks5_reply_failure_tolerates_concurrent_conn_removal (__main__.MemoryBackpressureTest.test_socks5_reply_failure_tolerates_concurrent_conn_removal) ... 2026-11-09 13:09:59.765 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:59.766 [x_tunnel][INFO] socks5 ('127.0.0.1', 12345) connect to 127.0.0.1:80 conn:1
+2026-11-09 13:09:59.766 [x_tunnel][WARNING] socks5 ('127.0.0.1', 12345) connect to 127.0.0.1:80 conn_id:1 closed:OSError('reply failed')
+ok
+test_stale_521_and_quota_error_do_not_stop_or_relogin_new_generation (__main__.MemoryBackpressureTest.test_stale_521_and_quota_error_do_not_stop_or_relogin_new_generation) ... 2026-11-09 13:09:59.766 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:59.766 [x_tunnel][WARNING] X-tunnel server is down, try get new server.
+2026-11-09 13:09:59.767 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:59.768 [x_tunnel][WARNING] x_server error:no quota
+ok
+test_stale_api_response_does_not_replace_new_generation_error (__main__.MemoryBackpressureTest.test_stale_api_response_does_not_replace_new_generation_error) ... 2026-11-09 13:09:59.768 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:59.768 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_stale_balance_response_does_not_replace_new_quota_or_server (__main__.MemoryBackpressureTest.test_stale_balance_response_does_not_replace_new_quota_or_server) ... 2026-11-09 13:09:59.768 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:59.768 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_stale_checker_does_not_reset_new_generation (__main__.MemoryBackpressureTest.test_stale_checker_does_not_reset_new_generation) ... 2026-11-09 13:09:59.768 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_stale_conn_read_and_write_unregistration_preserves_new_mapping (__main__.MemoryBackpressureTest.test_stale_conn_read_and_write_unregistration_preserves_new_mapping) ... ok
+test_stale_conn_stop_cannot_remove_reused_conn_id (__main__.MemoryBackpressureTest.test_stale_conn_stop_cannot_remove_reused_conn_id) ... 2026-11-09 13:09:59.769 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_stale_login_response_does_not_commit_to_new_generation (__main__.MemoryBackpressureTest.test_stale_login_response_does_not_commit_to_new_generation) ... 2026-11-09 13:09:59.769 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:59.769 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_stale_max_connection_close_does_not_reset_new_conn (__main__.MemoryBackpressureTest.test_stale_max_connection_close_does_not_reset_new_conn) ... 2026-11-09 13:09:59.769 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_stale_response_after_generation_check_cannot_touch_new_session (__main__.MemoryBackpressureTest.test_stale_response_after_generation_check_cannot_touch_new_session) ... 2026-11-09 13:09:59.769 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:59.770 [x_tunnel][DEBUG] no:1 test-front road_time:1.000197 snd:0 rcv:43 s_pool:0 on_road:0 target_worker:7 speed:442 roundtrip_time:1.000197 server_timeout:30
+ok
+test_stale_roundtrip_response_cannot_touch_new_session_transfer (__main__.MemoryBackpressureTest.test_stale_roundtrip_response_cannot_touch_new_session_transfer) ... 2026-11-09 13:09:59.770 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_stale_timeout_checker_does_not_update_new_target_on_roads (__main__.MemoryBackpressureTest.test_stale_timeout_checker_does_not_update_new_target_on_roads) ... 2026-11-09 13:09:59.770 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:59.770 [x_tunnel][WARNING] timeout_checker found transfer_no:1 timeout:10.000000
+ok
+test_stale_upload_uses_captured_generation_and_preserves_new_inflight_count (__main__.MemoryBackpressureTest.test_stale_upload_uses_captured_generation_and_preserves_new_inflight_count) ... 2026-11-09 13:09:59.770 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_start_conn_failure_stops_failed_conn_without_touching_others (__main__.MemoryBackpressureTest.test_start_conn_failure_stops_failed_conn_without_touching_others) ... 2026-11-09 13:09:59.771 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_start_conn_returns_false_when_connection_was_removed (__main__.MemoryBackpressureTest.test_start_conn_returns_false_when_connection_was_removed) ... 2026-11-09 13:09:59.771 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_start_conn_transfers_first_packet_before_start (__main__.MemoryBackpressureTest.test_start_conn_transfers_first_packet_before_start) ... 2026-11-09 13:09:59.771 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_start_conn_without_first_packet_only_starts (__main__.MemoryBackpressureTest.test_start_conn_without_first_packet_only_starts) ... 2026-11-09 13:09:59.771 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_start_creates_live_timeout_checker (__main__.MemoryBackpressureTest.test_start_creates_live_timeout_checker) ... 2026-11-09 13:09:59.771 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:09:59.771 [x_tunnel][INFO] session started.
+2026-11-09 13:10:00.776 [x_tunnel][INFO] WaitQueue stop
+2026-11-09 13:10:00.776 [x_tunnel][INFO] WaitQueue stop finished
+ok
+test_start_replaces_dead_roundtrip_worker_slot (__main__.MemoryBackpressureTest.test_start_replaces_dead_roundtrip_worker_slot) ... 2026-11-09 13:10:00.776 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:10:00.777 [x_tunnel][INFO] session started.
+2026-11-09 13:10:00.777 [x_tunnel][INFO] start close all connection
+2026-11-09 13:10:00.777 [x_tunnel][DEBUG] stop all connection finished
+2026-11-09 13:10:00.777 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:10:00.777 [x_tunnel][INFO] WaitQueue stop
+2026-11-09 13:10:00.777 [x_tunnel][INFO] WaitQueue stop finished
+2026-11-09 13:10:00.777 [x_tunnel][DEBUG] session stopped.
+2026-11-09 13:10:00.778 [x_tunnel][INFO] roundtrip thread 0 exit
+ok
+test_stop_clears_retained_bytes_and_pause_state (__main__.MemoryBackpressureTest.test_stop_clears_retained_bytes_and_pause_state) ... 2026-11-09 13:10:01.784 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:10:01.785 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:10:01.785 [x_tunnel][DEBUG] session stopped.
+ok
+test_stop_rejects_command_that_passed_initial_running_check (__main__.MemoryBackpressureTest.test_stop_rejects_command_that_passed_initial_running_check) ... 2026-11-09 13:10:01.785 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_stopped_session_rejects_frame_waiting_for_send_lock (__main__.MemoryBackpressureTest.test_stopped_session_rejects_frame_waiting_for_send_lock) ... 2026-11-09 13:10:01.786 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:10:01.786 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_tail_command_gap_recovers_ordered_data_then_eof (__main__.MemoryBackpressureTest.test_tail_command_gap_recovers_ordered_data_then_eof) ... 2026-11-09 13:10:01.786 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_timeout_sn_is_requested_then_retry_is_throttled (__main__.MemoryBackpressureTest.test_timeout_sn_is_requested_then_retry_is_throttled) ... ok
+test_two_roundtrips_can_wait_for_network_concurrently (__main__.MemoryBackpressureTest.test_two_roundtrips_can_wait_for_network_concurrently) ... 2026-11-09 13:10:01.787 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:10:01.788 [x_tunnel][DEBUG] no:2 test-front road_time:0.000753 snd:0 rcv:43 s_pool:0 on_road:1 target_worker:2 speed:588371 roundtrip_time:0.000753 server_timeout:30
+2026-11-09 13:10:01.788 [x_tunnel][DEBUG] no:1 test-front road_time:0.001050 snd:0 rcv:43 s_pool:0 on_road:0 target_worker:3 speed:421906 roundtrip_time:0.001050 server_timeout:30
+ok
+test_unacked_bytes_pause_and_resume_read_with_hysteresis (__main__.MemoryBackpressureTest.test_unacked_bytes_pause_and_resume_read_with_hysteresis) ... 2026-11-09 13:10:01.788 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_upload_data_from_old_generation_is_not_registered (__main__.MemoryBackpressureTest.test_upload_data_from_old_generation_is_not_registered) ... 2026-11-09 13:10:01.788 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_upload_data_from_same_generation_is_registered (__main__.MemoryBackpressureTest.test_upload_data_from_same_generation_is_registered) ... 2026-11-09 13:10:01.789 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_upload_data_is_not_registered_after_stop_during_send_wait (__main__.MemoryBackpressureTest.test_upload_data_is_not_registered_after_stop_during_send_wait) ... 2026-11-09 13:10:01.789 [x_tunnel][DEBUG] SendBuffer reset
+ok
+test_wait_queue_rejects_new_waiter_after_stop (__main__.MemoryBackpressureTest.test_wait_queue_rejects_new_waiter_after_stop) ... 2026-11-09 13:10:01.789 [x_tunnel][INFO] WaitQueue stop
+2026-11-09 13:10:01.789 [x_tunnel][INFO] WaitQueue stop finished
+ok
+test_worker_start_failure_rolls_back_and_allows_retry (__main__.MemoryBackpressureTest.test_worker_start_failure_rolls_back_and_allows_retry) ... 2026-11-09 13:10:01.789 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:10:01.789 [x_tunnel][ERROR] session start failed:RuntimeError('thread start failed')
+2026-11-09 13:10:01.791 [x_tunnel][ERROR] Except stack:Traceback (most recent call last):
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/x_tunnel/local/proxy_session.py", line 186, in start
+    self.round_trip_thread[i].start()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "<repo>/tests/test_x_tunnel_memory_backpressure.py", line 2094, in start
+    raise RuntimeError("thread start failed")
+RuntimeError: thread start failed
+
+2026-11-09 13:10:01.791 [x_tunnel][INFO] start close all connection
+2026-11-09 13:10:01.791 [x_tunnel][DEBUG] stop all connection finished
+2026-11-09 13:10:01.791 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:10:01.791 [x_tunnel][INFO] WaitQueue stop
+2026-11-09 13:10:01.791 [x_tunnel][INFO] WaitQueue stop finished
+2026-11-09 13:10:01.791 [x_tunnel][DEBUG] session stopped.
+2026-11-09 13:10:01.791 [x_tunnel][INFO] session started.
+2026-11-09 13:10:01.791 [x_tunnel][INFO] start close all connection
+2026-11-09 13:10:01.791 [x_tunnel][DEBUG] stop all connection finished
+2026-11-09 13:10:01.791 [x_tunnel][DEBUG] SendBuffer reset
+2026-11-09 13:10:01.791 [x_tunnel][INFO] WaitQueue stop
+2026-11-09 13:10:01.791 [x_tunnel][INFO] WaitQueue stop finished
+2026-11-09 13:10:01.791 [x_tunnel][DEBUG] session stopped.
+ok
+
+----------------------------------------------------------------------
+Ran 81 tests in 6.685s
+
+OK

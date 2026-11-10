@@ -1,0 +1,129 @@
+{
+  "files": [
+    {
+      "file": "gae_proxy/local/front.py",
+      "old": "c384fd8df0b0345c788b6058ab0d06b30c6fc67b935228fc02e51d61e7eaf068",
+      "new": "c384fd8df0b0345c788b6058ab0d06b30c6fc67b935228fc02e51d61e7eaf068"
+    },
+    {
+      "file": "gae_proxy/local/metrics.py",
+      "old": "0f32c6352ed2e8e8474a856958920b4f6619c9f73a9e3587bdef4ddb63a53124",
+      "new": "0f32c6352ed2e8e8474a856958920b4f6619c9f73a9e3587bdef4ddb63a53124"
+    },
+    {
+      "file": "launcher/launcher_runtime_metrics.py",
+      "old": "ba990dd708499babb12421f357a3fd86d2f1982e83168443f4c55e568fd7117b",
+      "new": "ba990dd708499babb12421f357a3fd86d2f1982e83168443f4c55e568fd7117b"
+    },
+    {
+      "file": "launcher/runtime_state.py",
+      "old": "36a908909d939d06a7d2b5a5167fa26df2bd33060c0eaae6dd1149e7e10420cf",
+      "new": "36a908909d939d06a7d2b5a5167fa26df2bd33060c0eaae6dd1149e7e10420cf"
+    },
+    {
+      "file": "launcher/start.py",
+      "old": "4744d1123508702065fe7b5ee7c413894923bd2907d2a097edc79ffa4ae7dfe9",
+      "new": "4744d1123508702065fe7b5ee7c413894923bd2907d2a097edc79ffa4ae7dfe9"
+    },
+    {
+      "file": "launcher/sys_platform.py",
+      "old": "84bd9b18bef5bf3f8413aee223318fd8b5a27d2f02fd9c4089f3a4b5891502f3",
+      "new": "84bd9b18bef5bf3f8413aee223318fd8b5a27d2f02fd9c4089f3a4b5891502f3"
+    },
+    {
+      "file": "launcher/web_control.py",
+      "old": "663c415915dfbd278cb05c3a4fe891b882067fddf298989efecb648e8f206df3",
+      "new": "663c415915dfbd278cb05c3a4fe891b882067fddf298989efecb648e8f206df3"
+    },
+    {
+      "file": "launcher/web_ui/css/dashboard.css",
+      "old": "dc73a38fbdc87863f83179c17b518b5d4254065296d8a4ddb475b7e08a2710e7",
+      "new": "dc73a38fbdc87863f83179c17b518b5d4254065296d8a4ddb475b7e08a2710e7"
+    },
+    {
+      "file": "launcher/web_ui/dashboard.html",
+      "old": "4af3e836c30226ad50074ceed6810e080a35a1ba3f080e6abb8bc702c02d3812",
+      "new": "4af3e836c30226ad50074ceed6810e080a35a1ba3f080e6abb8bc702c02d3812"
+    },
+    {
+      "file": "launcher/web_ui/js/dashboard.js",
+      "old": "d232174658f62d9dd9a027a173d8fc4191be3187684018009a2338b3eda15eae",
+      "new": "9c7501a8d21e13a2240a826976d9c36ff75dc0314dbc53ead517c8ea1af67cb3"
+    },
+    {
+      "file": "lib/noarch/front_base/http_common.py",
+      "old": "ee11bf3827f3688be2e19c241c80a7dab55d854b51bdf1640cc277f71215bcde",
+      "new": "ee11bf3827f3688be2e19c241c80a7dab55d854b51bdf1640cc277f71215bcde"
+    },
+    {
+      "file": "lib/noarch/front_base/http_dispatcher.py",
+      "old": "0e057a45978a5c78a2fa3a0fb28a6dc4ae704a3f57e3f1bb9ea606a7520b7cd1",
+      "new": "0e057a45978a5c78a2fa3a0fb28a6dc4ae704a3f57e3f1bb9ea606a7520b7cd1"
+    },
+    {
+      "file": "lib/noarch/front_base/metrics.py",
+      "old": "6cf8b063957c2a53f1eded9da5425a0452ed2aee12ba7e8cbce260512a431d3f",
+      "new": "6cf8b063957c2a53f1eded9da5425a0452ed2aee12ba7e8cbce260512a431d3f"
+    },
+    {
+      "file": "lib/noarch/runtime_metrics.py",
+      "old": "c458bfa0103e1ecaaccd79c8dd3a1ca1c99bae145ccb2325eb5a6d3a2ea0c3e1",
+      "new": "c458bfa0103e1ecaaccd79c8dd3a1ca1c99bae145ccb2325eb5a6d3a2ea0c3e1"
+    },
+    {
+      "file": "lib/noarch/xlog.py",
+      "old": "fefe603831129c5d11906a32c806d5d711f7c9008e79186a37c899c8e25074a6",
+      "new": "fefe603831129c5d11906a32c806d5d711f7c9008e79186a37c899c8e25074a6"
+    },
+    {
+      "file": "smart_router/local/dns_query.py",
+      "old": "4a0ac8216fea9e17ffd6743ee7fbdcb2701f9c4bae9a848c60c8a929966dbba3",
+      "new": "4a0ac8216fea9e17ffd6743ee7fbdcb2701f9c4bae9a848c60c8a929966dbba3"
+    },
+    {
+      "file": "smart_router/local/host_records.py",
+      "old": "5598bbbeb4c4e53f0beec741b2e3cbcfeea308023f29e1318f35e90aab7a8321",
+      "new": "5598bbbeb4c4e53f0beec741b2e3cbcfeea308023f29e1318f35e90aab7a8321"
+    },
+    {
+      "file": "smart_router/local/metrics.py",
+      "old": "09da520868732640202568d1d1ace243e3c2727ed89cbb806f58701935160898",
+      "new": "163bc5e7696fc36f60ebec2e78bf63249b1f09d21877b896b65864e2ae4074f9"
+    },
+    {
+      "file": "smart_router/local/pipe_socks.py",
+      "old": "0a6f344cb6d5d0ca06c5e2a8c91ade42d2e656352387cdaf7758dc10a718d274",
+      "new": "f7dbb58c67862b91b519998bfbc4181c0227f8a388b46aeb475db2acfce10c30"
+    },
+    {
+      "file": "smart_router/local/smart_route.py",
+      "old": "f15f10dcbcc5126ac65741c9fa5e807d772ab79c555d39c696a1e5c5a8e6fe65",
+      "new": "cf52a0b5474d0c6c19243afc56a7456a101897ef0245e52e6a8e33a5ed8a9e64"
+    },
+    {
+      "file": "x_tunnel/local/base_container.py",
+      "old": "cd97a04181723ccfd50788314a1bc3456d9e80ab28310f57702aa767c5e7639b",
+      "new": "cd97a04181723ccfd50788314a1bc3456d9e80ab28310f57702aa767c5e7639b"
+    },
+    {
+      "file": "x_tunnel/local/cloudflare_front/front.py",
+      "old": "90c0102d71b58921cf656bac71683c354965265d3550cb590bf7691b51351efb",
+      "new": "90c0102d71b58921cf656bac71683c354965265d3550cb590bf7691b51351efb"
+    },
+    {
+      "file": "x_tunnel/local/cloudfront_front/front.py",
+      "old": "4b05511b3b7cea1ef984867f7ce3f5ac83ad48feb6ba13f04c95452b819e5d2f",
+      "new": "4b05511b3b7cea1ef984867f7ce3f5ac83ad48feb6ba13f04c95452b819e5d2f"
+    },
+    {
+      "file": "x_tunnel/local/metrics.py",
+      "old": "ce104ba720a7e878e2e9ffcf525193bd98ce3450ed665478428126e7df4b4c64",
+      "new": "ce104ba720a7e878e2e9ffcf525193bd98ce3450ed665478428126e7df4b4c64"
+    },
+    {
+      "file": "x_tunnel/local/proxy_session.py",
+      "old": "d889481fe632d56fba60971ec3b64800b04e891622296627f1c5f176babf33be",
+      "new": "d889481fe632d56fba60971ec3b64800b04e891622296627f1c5f176babf33be"
+    }
+  ]
+}

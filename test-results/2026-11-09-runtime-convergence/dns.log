@@ -1,0 +1,149 @@
+test_alias_cycle_is_still_cut_within_one_call (__main__.DnsQueryHistoryIsolationTest.test_alias_cycle_is_still_cut_within_one_call) ... ok
+test_different_domains_can_share_an_alias (__main__.DnsQueryHistoryIsolationTest.test_different_domains_can_share_an_alias) ... ok
+test_dns_types_have_independent_histories (__main__.DnsQueryHistoryIsolationTest.test_dns_types_have_independent_histories) ... ok
+test_repeated_top_level_alias_query_resolves_again (__main__.DnsQueryHistoryIsolationTest.test_repeated_top_level_alias_query_resolves_again) ... ok
+test_clean_invalidates_old_direct_query_write (__main__.LateParallelResultTest.test_clean_invalidates_old_direct_query_write) ... ok
+test_clean_invalidates_old_parallel_worker_but_allows_new_write (__main__.LateParallelResultTest.test_clean_invalidates_old_parallel_worker_but_allows_new_write) ... ok
+test_older_call_keeps_its_valid_result_without_overwriting_newer_cache (__main__.LateParallelResultTest.test_older_call_keeps_its_valid_result_without_overwriting_newer_cache) ... ok
+test_replaced_cache_instance_rejects_late_direct_write (__main__.LateParallelResultTest.test_replaced_cache_instance_rejects_late_direct_write) ... ok
+test_replaced_cache_instance_rejects_late_parallel_write (__main__.LateParallelResultTest.test_replaced_cache_instance_rejects_late_parallel_write) ... ok
+test_timed_out_generation_cannot_overwrite_newer_query_cache (__main__.LateParallelResultTest.test_timed_out_generation_cannot_overwrite_newer_query_cache) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.001s
+
+OK
+
+test_doh_cname_cycle_is_bounded_and_does_not_accumulate_pool (__main__.DnsHttpsOwnershipTest.test_doh_cname_cycle_is_bounded_and_does_not_accumulate_pool) ... 2026-11-09 13:10:57.968 [smart_router][DEBUG] DNS DoH B.EXAMPLE. return [] t:0.000042
+2026-11-09 13:10:57.968 [smart_router][DEBUG] DNS DoH a.example return [] t:0.002022
+ok
+test_doh_noncycle_cname_succeeds (__main__.DnsHttpsOwnershipTest.test_doh_noncycle_cname_succeeds) ... 2026-11-09 13:10:57.968 [smart_router][DEBUG] DNS DoH alias.example. return ['192.0.2.8'] t:0.000036
+2026-11-09 13:10:57.968 [smart_router][DEBUG] DNS DoH START.EXAMPLE. return ['192.0.2.8'] t:0.000039
+ok
+test_doh_stop_closes_every_pooled_client (__main__.DnsHttpsOwnershipTest.test_doh_stop_closes_every_pooled_client) ... ok
+test_expired_pool_close_failure_does_not_block_new_connection (__main__.DnsHttpsOwnershipTest.test_expired_pool_close_failure_does_not_block_new_connection) ... ok
+test_expired_tcp_and_doh_pool_entries_are_closed (__main__.DnsHttpsOwnershipTest.test_expired_tcp_and_doh_pool_entries_are_closed) ... ok
+test_failed_request_closes_checked_out_client (__main__.DnsHttpsOwnershipTest.test_failed_request_closes_checked_out_client) ... 2026-11-09 13:10:57.969 [smart_router][WARNING] DNS s:https://1.1.1.1/dns-query query:example.com fail t:0.000014
+ok
+test_http_client_close_releases_socket (__main__.DnsHttpsOwnershipTest.test_http_client_close_releases_socket) ... ok
+test_parallel_tcp_success_pool_has_capacity_and_stop_closes_all (__main__.DnsHttpsOwnershipTest.test_parallel_tcp_success_pool_has_capacity_and_stop_closes_all) ... 2026-11-09 13:10:57.969 [smart_router][DEBUG] DNS Tcp example.com return ['192.0.2.8'] t:0.000037
+2026-11-09 13:10:57.969 [smart_router][DEBUG] DNS Tcp example.com return ['192.0.2.8'] t:0.000369
+2026-11-09 13:10:57.969 [smart_router][DEBUG] DNS Tcp example.com return ['192.0.2.8'] t:0.000335
+2026-11-09 13:10:57.969 [smart_router][DEBUG] DNS Tcp example.com return ['192.0.2.8'] t:0.000265
+2026-11-09 13:10:57.969 [smart_router][DEBUG] DNS Tcp example.com return ['192.0.2.8'] t:0.000251
+2026-11-09 13:10:57.969 [smart_router][DEBUG] DNS Tcp example.com return ['192.0.2.8'] t:0.000377
+ok
+test_tcp_cname_cycle_is_bounded_and_does_not_accumulate_pool (__main__.DnsHttpsOwnershipTest.test_tcp_cname_cycle_is_bounded_and_does_not_accumulate_pool) ... 2026-11-09 13:10:57.970 [smart_router][DEBUG] DNS Tcp B.EXAMPLE. return [] t:0.000034
+2026-11-09 13:10:57.970 [smart_router][DEBUG] DNS Tcp a.example return [] t:0.000049
+ok
+test_invalid_dns_payload_closes_checked_out_socket (__main__.DnsTcpTransportTest.test_invalid_dns_payload_closes_checked_out_socket) ... 2026-11-09 13:10:57.970 [smart_router][ERROR] query_over_tcp example.com type:1 except:DNSError('Error unpacking DNSHeader [offset=0]: Not enough bytes [offset=0,remaining=4,requested=12]')
+2026-11-09 13:10:57.971 [smart_router][ERROR] Except stack:Traceback (most recent call last):
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/lib/noarch/dnslib/dns.py", line 480, in parse
+    (id,bitmap,q,a,auth,ar) = buffer.unpack("!HHHHHH")
+                              ~~~~~~~~~~~~~^^^^^^^^^^^
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/lib/noarch/dnslib/buffer.py", line 103, in unpack
+    data = self.get(struct.calcsize(fmt))
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/lib/noarch/dnslib/buffer.py", line 63, in get
+    raise BufferError("Not enough bytes [offset=%d,remaining=%d,requested=%d]" %
+            (self.offset,self.remaining(),length))
+dnslib.buffer.BufferError: Not enough bytes [offset=0,remaining=4,requested=12]
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/smart_router/local/dns_query.py", line 666, in query
+    p = DNSRecord.parse(response[2:length + 2])
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/lib/noarch/dnslib/dns.py", line 100, in parse
+    header = DNSHeader.parse(buffer)
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/lib/noarch/dnslib/dns.py", line 483, in parse
+    raise DNSError("Error unpacking DNSHeader [offset=%d]: %s" % (
+                        buffer.offset,e))
+dnslib.dns.DNSError: Error unpacking DNSHeader [offset=0]: Not enough bytes [offset=0,remaining=4,requested=12]
+
+ok
+test_split_length_prefix_is_reassembled (__main__.DnsTcpTransportTest.test_split_length_prefix_is_reassembled) ... 2026-11-09 13:10:57.971 [smart_router][DEBUG] DNS Tcp example.com return ['192.0.2.1'] t:0.000053
+ok
+test_timeout_closes_checked_out_socket (__main__.DnsTcpTransportTest.test_timeout_closes_checked_out_socket) ... 2026-11-09 13:10:57.971 [smart_router][WARNING] query_over_tcp example.com type:1 timeout
+ok
+test_truncated_frame_stops_at_eof_and_closes_socket (__main__.DnsTcpTransportTest.test_truncated_frame_stops_at_eof_and_closes_socket) ... ok
+test_fallbacks_preserve_aaaa_query_type (__main__.LocalAndCombinedDnsTest.test_fallbacks_preserve_aaaa_query_type) ... ok
+test_ipv6_direct_queries_aaaa_not_soa (__main__.LocalAndCombinedDnsTest.test_ipv6_direct_queries_aaaa_not_soa) ... 2026-11-09 13:10:57.971 [smart_router][DEBUG] try_loop test ['direct'] to example.com:443
+2026-11-09 13:10:57.971 [smart_router][INFO] test example.com:443 forward to direct
+ok
+test_ipv6_udp_response_address_is_accepted (__main__.LocalAndCombinedDnsTest.test_ipv6_udp_response_address_is_accepted) ... 2026-11-09 13:10:57.971 [smart_router][DEBUG] DNS local query received 1 from:2001:db8::1 domain:example.com. org:example.com
+2026-11-09 13:10:57.971 [smart_router][INFO] DNS Client recv worker exit.
+ok
+test_local_query_honors_caller_timeout (__main__.LocalAndCombinedDnsTest.test_local_query_honors_caller_timeout) ... 2026-11-09 13:10:57.971 [smart_router][DEBUG] query by udp, example.com cost:0.000004, return:[]
+ok
+test_local_udp_cname_cycle_is_bounded_and_alias_chain_still_works (__main__.LocalAndCombinedDnsTest.test_local_udp_cname_cycle_is_bounded_and_alias_chain_still_works) ... 2026-11-09 13:10:57.971 [smart_router][DEBUG] query by udp, b.example. cost:0.000002, return:['192.0.2.8']
+2026-11-09 13:10:57.971 [smart_router][DEBUG] query by udp, a.example cost:0.000015, return:['192.0.2.8']
+2026-11-09 13:10:57.971 [smart_router][DEBUG] query by udp, b.example. cost:0.000002, return:[]
+2026-11-09 13:10:57.971 [smart_router][DEBUG] query by udp, a.example cost:0.000010, return:[]
+ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.005s
+
+OK
+
+test_concurrent_same_id_queries_get_distinct_transactions (__main__.DnsOwnershipTest.test_concurrent_same_id_queries_get_distinct_transactions) ... 2026-11-09 13:13:39.486 [smart_router][DEBUG] query by udp, example.com cost:0.000036, return:[]
+2026-11-09 13:13:39.486 [smart_router][DEBUG] query by udp, example.com cost:0.000097, return:[]
+ok
+test_late_response_after_timeout_is_not_delivered (__main__.DnsOwnershipTest.test_late_response_after_timeout_is_not_delivered) ... 2026-11-09 13:13:39.487 [smart_router][DEBUG] DNS local query received 1 from:192.0.2.53 domain:example.com. org:example.com
+2026-11-09 13:13:39.487 [smart_router][INFO] DNS Client recv worker exit.
+ok
+test_old_query_cleanup_does_not_remove_reused_id (__main__.DnsOwnershipTest.test_old_query_cleanup_does_not_remove_reused_id) ... 2026-11-09 13:13:39.487 [smart_router][DEBUG] query by udp, example.com cost:0.000012, return:[]
+ok
+test_udp_accepts_case_and_trailing_dot_equivalence (__main__.DnsOwnershipTest.test_udp_accepts_case_and_trailing_dot_equivalence) ... 2026-11-09 13:13:39.487 [smart_router][DEBUG] DNS local query received 1 from:192.0.2.53 domain:EXAMPLE.COM. org:example.com
+2026-11-09 13:13:39.487 [smart_router][INFO] DNS Client recv worker exit.
+ok
+test_udp_alias_is_followed_by_calling_thread (__main__.DnsOwnershipTest.test_udp_alias_is_followed_by_calling_thread) ... 2026-11-09 13:13:39.488 [smart_router][DEBUG] query by udp, alias.example.com. cost:0.000006, return:['192.0.2.8']
+2026-11-09 13:13:39.488 [smart_router][DEBUG] query by udp, example.com cost:0.000029, return:['192.0.2.8']
+ok
+test_udp_cname_is_handed_off_without_recursive_call_on_receiver (__main__.DnsOwnershipTest.test_udp_cname_is_handed_off_without_recursive_call_on_receiver) ... 2026-11-09 13:13:39.488 [smart_router][DEBUG] DNS local query received 1 from:192.0.2.53 domain:example.com. org:example.com
+2026-11-09 13:13:39.488 [smart_router][INFO] DNS Client recv worker exit.
+ok
+test_udp_cost_log_uses_the_same_monotonic_clock (__main__.DnsOwnershipTest.test_udp_cost_log_uses_the_same_monotonic_clock) ... ok
+test_udp_deadline_is_not_extended_by_wall_clock_rollback (__main__.DnsOwnershipTest.test_udp_deadline_is_not_extended_by_wall_clock_rollback) ... 2026-11-09 13:13:39.488 [smart_router][DEBUG] query by udp, example.com cost:0.000000, return:[]
+ok
+test_udp_rejects_mismatched_response_metadata_and_rr (__main__.DnsOwnershipTest.test_udp_rejects_mismatched_response_metadata_and_rr) ... 2026-11-09 13:13:39.488 [smart_router][WARNING] received unmatched DNS response from:192.0.2.53
+2026-11-09 13:13:39.488 [smart_router][INFO] DNS Client recv worker exit.
+2026-11-09 13:13:39.488 [smart_router][INFO] DNS Client recv worker exit.
+2026-11-09 13:13:39.488 [smart_router][WARNING] received unmatched DNS response from:192.0.2.53
+2026-11-09 13:13:39.488 [smart_router][INFO] DNS Client recv worker exit.
+2026-11-09 13:13:39.488 [smart_router][WARNING] received unmatched DNS response from:192.0.2.53
+2026-11-09 13:13:39.488 [smart_router][INFO] DNS Client recv worker exit.
+2026-11-09 13:13:39.488 [smart_router][DEBUG] DNS local query received 1 from:192.0.2.53 domain:example.com. org:example.com
+2026-11-09 13:13:39.488 [smart_router][INFO] DNS Client recv worker exit.
+ok
+test_udp_rejects_unconfigured_source_and_non_dns_port (__main__.DnsOwnershipTest.test_udp_rejects_unconfigured_source_and_non_dns_port) ... 2026-11-09 13:13:39.488 [smart_router][WARNING] ignore DNS response from unconfigured source:198.51.100.99 port:53
+2026-11-09 13:13:39.488 [smart_router][INFO] DNS Client recv worker exit.
+2026-11-09 13:13:39.488 [smart_router][WARNING] ignore DNS response from unconfigured source:192.0.2.53 port:5353
+2026-11-09 13:13:39.488 [smart_router][INFO] DNS Client recv worker exit.
+ok
+test_udp_wait_uses_remaining_budget_after_multiple_sends (__main__.DnsOwnershipTest.test_udp_wait_uses_remaining_budget_after_multiple_sends) ... 2026-11-09 13:13:39.566 [smart_router][DEBUG] query by udp, example.com cost:0.077998, return:[]
+ok
+test_xxnet_and_system_sources_preserve_requested_address_family (__main__.DnsOwnershipTest.test_xxnet_and_system_sources_preserve_requested_address_family) ... 2026-11-09 13:13:39.566 [smart_router][DEBUG] query_dns_from_xxnet example.com cost:0.000002 return:['192.0.2.1|CN', '2001:db8::1|CN']
+2026-11-09 13:13:39.567 [smart_router][DEBUG] query_dns_from_xxnet example.com cost:0.000001 return:['192.0.2.1|CN', '2001:db8::1|CN']
+2026-11-09 13:13:39.567 [smart_router][DEBUG] query_by_system, example.com 28 cost:0.000013, return:['2001:db8::2']
+ok
+test_cname_is_followed_only_when_no_direct_answer (__main__.DnsTransportMatchingTest.test_cname_is_followed_only_when_no_direct_answer) ... 2026-11-09 13:13:39.567 [smart_router][DEBUG] DNS Tcp example.com return ['192.0.2.9'] t:0.000054
+ok
+test_doh_mismatched_answer_closes_without_repool (__main__.DnsTransportMatchingTest.test_doh_mismatched_answer_closes_without_repool) ... 2026-11-09 13:13:39.567 [smart_router][WARNING] DnsOverHttpsQuery query example.com cost:0.000051 fail:ValueError('unmatched DNS HTTPS response')
+ok
+test_ns_answer_keeps_existing_semantics (__main__.DnsTransportMatchingTest.test_ns_answer_keeps_existing_semantics) ... 2026-11-09 13:13:39.567 [smart_router][DEBUG] DNS Tcp example.com return ['ns1.example.com.'] t:0.000037
+ok
+test_ns_cname_is_followed_when_no_direct_ns_answer (__main__.DnsTransportMatchingTest.test_ns_cname_is_followed_when_no_direct_ns_answer) ... ok
+test_response_rejects_unrelated_owner_but_accepts_cname_target (__main__.DnsTransportMatchingTest.test_response_rejects_unrelated_owner_but_accepts_cname_target) ... ok
+test_tcp_mismatched_answer_closes_without_repool (__main__.DnsTransportMatchingTest.test_tcp_mismatched_answer_closes_without_repool) ... 2026-11-09 13:13:39.567 [smart_router][ERROR] query_over_tcp example.com type:1 except:ValueError('unmatched DNS TCP response')
+2026-11-09 13:13:39.570 [smart_router][ERROR] Except stack:Traceback (most recent call last):
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/smart_router/local/dns_query.py", line 668, in query
+    raise ValueError("unmatched DNS TCP response")
+ValueError: unmatched DNS TCP response
+
+ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.085s
+
+OK

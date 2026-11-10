@@ -210,6 +210,7 @@ class DnsIndependent(unittest.TestCase):
         obj.ns_backoff_lock = threading.Lock()
         obj.timeout = 0
         obj.waiters = {}
+        obj.waiters_lock = threading.Lock()
         return obj
 
     def test_backoff_query_differential(self):
@@ -217,7 +218,8 @@ class DnsIndependent(unittest.TestCase):
         now = [1000.0]
         sent = []
         obj.send_request = lambda _id, server, _domain, _type: sent.append(server)
-        with mock.patch.object(self.module.time, 'time', side_effect=lambda: now[0]):
+        with mock.patch.object(self.module.time, 'time', side_effect=lambda: now[0]), \
+             mock.patch.object(self.module.time, 'monotonic', side_effect=lambda: now[0]):
             obj.ns_backoff = {b'a': 1030, b'b': 1010, b'c': 1050}
             obj.query('example', timeout=0)
             self.assertEqual([b'b'], sent, '全冷却只允许最早到期者 fail-open')
@@ -493,6 +495,7 @@ class LifecycleIndependent(unittest.TestCase):
     def test_dispatcher_stop_failure_still_seals(self):
         module = load_file('acceptance_dispatcher_stop_failure', LIB / 'front_base/http_dispatcher.py', 'front_base')
         dispatcher = module.HttpsDispatcher.__new__(module.HttpsDispatcher)
+        dispatcher._state_lock = threading.Lock()
         dispatcher.running = True
         dispatcher.request_queue = mock.Mock()
         dispatcher.close_all_worker = mock.Mock(side_effect=RuntimeError('worker cleanup'))

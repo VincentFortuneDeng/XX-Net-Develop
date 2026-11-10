@@ -1,0 +1,515 @@
+{
+  "schema_version": 1,
+  "fields": {
+    "x_tunnel.active_conns": {
+      "type": "integer",
+      "unit": "connections",
+      "semantics": "gauge",
+      "missing": "not_running_or_lock_unavailable",
+      "description": "当前 Session 中仍在运行的 Conn 数。"
+    },
+    "x_tunnel.active_transfers": {
+      "type": "integer",
+      "unit": "transfers",
+      "semantics": "gauge",
+      "missing": "not_running_or_lock_unavailable",
+      "description": "当前 Session 的活跃 transfer 数。"
+    },
+    "x_tunnel.inflight_requests": {
+      "type": "integer",
+      "unit": "requests",
+      "semantics": "gauge",
+      "missing": "not_running_or_lock_unavailable",
+      "description": "已发出但尚未完成的 roundtrip 请求数。"
+    },
+    "x_tunnel.upload_bytes_total": {
+      "type": "integer",
+      "unit": "bytes",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "进程级累计上行有效负载字节，模块重启不清零。"
+    },
+    "x_tunnel.download_bytes_total": {
+      "type": "integer",
+      "unit": "bytes",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "进程级累计下行有效负载字节，模块重启不清零。"
+    },
+    "x_tunnel.send_buffer_bytes": {
+      "type": "integer",
+      "unit": "bytes",
+      "semantics": "gauge",
+      "missing": "not_running_or_lock_unavailable",
+      "description": "Session SendBuffer 当前占用字节。"
+    },
+    "x_tunnel.conn_send_buffer_bytes": {
+      "type": "integer",
+      "unit": "bytes",
+      "semantics": "gauge_sum",
+      "missing": "not_running_or_lock_unavailable",
+      "description": "所有 Conn 尚未写入本地 socket 的缓冲字节总和。"
+    },
+    "x_tunnel.cmd_queue_bytes": {
+      "type": "integer",
+      "unit": "bytes",
+      "semantics": "gauge_sum",
+      "missing": "not_running_or_lock_unavailable",
+      "description": "所有 Conn 乱序命令队列的当前字节总和。"
+    },
+    "x_tunnel.cmd_queue_window_ratio": {
+      "type": "number",
+      "unit": "ratio",
+      "semantics": "gauge_max",
+      "missing": "no_active_conn_or_lock_unavailable",
+      "description": "单 Conn 乱序队列字节除以其协议窗口的最大值；不钳制大于 1 的异常值。"
+    },
+    "x_tunnel.cmd_queue_gap_age_seconds": {
+      "type": "number",
+      "unit": "seconds",
+      "semantics": "gauge_max",
+      "missing": "no_gap_or_lock_unavailable",
+      "description": "当前最老乱序缺口的单调时钟年龄。"
+    },
+    "x_tunnel.command_gaps_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "进程级新乱序缺口出现次数。"
+    },
+    "x_tunnel.command_gap_recovered_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "原缺失命令到达并恢复按序处理的次数；数据命令还须观察到本地发送进度前进。"
+    },
+    "x_tunnel.sn_retries_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "进程级 SN 重取请求次数。"
+    },
+    "x_tunnel.slow_roundtrips_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "超过既定慢请求阈值的 roundtrip 次数。"
+    },
+    "x_tunnel.timeout_roundtrips_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "达到期限而未完成的 roundtrip 次数。"
+    },
+    "x_tunnel.command_queue_overflow_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "因超过联合队列字节上限而受控停止的次数。"
+    },
+    "x_tunnel.command_gap_timeout_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "永久命令缺口到期而受控停止的次数。"
+    },
+    "x_tunnel.peer_close_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "正常 peer close 导致的 Conn 停止次数。"
+    },
+    "x_tunnel.network_errors_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "网络读写或连接错误导致的受控停止次数。"
+    },
+    "x_tunnel.generation_stops_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "Session reset、换代或旧代清理导致的 Conn 停止次数。"
+    },
+    "dns.queries_total": {
+      "type": "integer",
+      "unit": "queries",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "进程级 DNS 顶层调用次数。"
+    },
+    "dns.complete_results_total": {
+      "type": "integer",
+      "unit": "queries",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "返回至少一个合法地址的 DNS 顶层调用次数。"
+    },
+    "dns.empty_results_total": {
+      "type": "integer",
+      "unit": "queries",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "按时返回但没有地址的 DNS 顶层调用次数。"
+    },
+    "dns.timeouts_total": {
+      "type": "integer",
+      "unit": "queries",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "因期限到期而返回空结果的 DNS 调用次数。"
+    },
+    "dns.latency_seconds_total": {
+      "type": "number",
+      "unit": "seconds",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "DNS 顶层调用累计时延，用于与同窗口调用数计算平均值。"
+    },
+    "dns.generation_drops_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "并行旧代结果因代际不符而不能交付或提交的次数。"
+    },
+    "dns.cache_commit_rejected_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "因 cache 实例或 epoch 变化而拒绝提交的次数。"
+    },
+    "dns.cache_entries": {
+      "type": "integer",
+      "unit": "entries",
+      "semantics": "gauge",
+      "missing": "not_running_or_lock_unavailable",
+      "description": "DNS 缓存当前条目数，不导出缓存键。"
+    },
+    "dns.cache_capacity": {
+      "type": "integer",
+      "unit": "entries",
+      "semantics": "gauge",
+      "missing": "not_running_or_lock_unavailable",
+      "description": "DNS 缓存配置容量。"
+    },
+    "dns.cache_epoch": {
+      "type": "integer",
+      "unit": "epoch",
+      "semantics": "gauge",
+      "missing": "not_running_or_lock_unavailable",
+      "description": "DNS 缓存当前 epoch，仅用于分段和拒绝旧代提交。"
+    },
+    "smart_router.route_direct_total": {
+      "type": "integer",
+      "unit": "connections",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "选择 direct 路由的连接数。"
+    },
+    "smart_router.route_proxy_total": {
+      "type": "integer",
+      "unit": "connections",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "选择固定代理类路由的连接数，不导出目标或代理地址。"
+    },
+    "smart_router.route_blocked_total": {
+      "type": "integer",
+      "unit": "connections",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "由固定阻断规则处理的连接数。"
+    },
+    "smart_router.route_unknown_total": {
+      "type": "integer",
+      "unit": "connections",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "未能归类或路由选择失败的连接数。"
+    },
+    "smart_router.handoff_failures_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "PipeSocks 明确拒绝接管配对的次数，不包含 direct 远端建连失败后的路由回退。"
+    },
+    "smart_router.direct_connect_failures_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "direct 或 direct6 远端建连失败并尝试下一条路由的次数，不等于用户最终失败。"
+    },
+    "smart_router.pipe_register_failures_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "PipeSocks 注册当前配对失败并完整回滚的次数，不应拖停整个管道。"
+    },
+    "smart_router.pipe_stopped_handoffs_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "PipeSocks 已停止后拒绝新配对的次数。"
+    },
+    "smart_router.pipe_closed_socket_handoffs_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "PipeSocks 发布前发现 socket 已关闭而拒绝配对的次数。"
+    },
+    "smart_router.pipe_select_failures_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "PipeSocks selector 故障导致关键转发线程停止的次数。"
+    },
+    "smart_router.pipe_loop_failures_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "PipeSocks 转发循环异常导致关键转发线程停止的次数。"
+    },
+    "smart_router.pipe_running": {
+      "type": "integer",
+      "unit": "boolean",
+      "semantics": "gauge",
+      "missing": "not_running",
+      "description": "PipeSocks 关键转发生命周期状态，运行是 1，停止是 0；不依赖 socket 集合锁。"
+    },
+    "smart_router.pipe_read_sockets": {
+      "type": "integer",
+      "unit": "sockets",
+      "semantics": "gauge",
+      "missing": "not_running_or_lock_unavailable",
+      "description": "PipeSocks 当前读集合 socket 数。"
+    },
+    "smart_router.pipe_write_sockets": {
+      "type": "integer",
+      "unit": "sockets",
+      "semantics": "gauge",
+      "missing": "not_running_or_lock_unavailable",
+      "description": "PipeSocks 当前写集合 socket 数。"
+    },
+    "smart_router.pipe_write_buffer_bytes": {
+      "type": "integer",
+      "unit": "bytes",
+      "semantics": "gauge_sum",
+      "missing": "not_running_or_lock_unavailable",
+      "description": "PipeSocks 当前写缓冲字节总和。"
+    },
+    "smart_router.pipe_controlled_closes_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "not_running",
+      "description": "PipeSocks 对端关闭、注册失败和停止等受控关闭次数。"
+    },
+    "front.by_type": {
+      "type": "object",
+      "unit": "fixed_front_categories",
+      "semantics": "structured_snapshot",
+      "missing": "category_not_running_returns_null_fields",
+      "categories": [
+        "gae",
+        "direct",
+        "cloudflare",
+        "cloudfront"
+      ],
+      "value_fields": {
+        "workers": {
+          "type": "integer",
+          "unit": "workers",
+          "semantics": "gauge_sum",
+          "missing": "not_running_or_lock_unavailable"
+        },
+        "h1_connections": {
+          "type": "integer",
+          "unit": "connections",
+          "semantics": "gauge_sum",
+          "missing": "not_running_or_lock_unavailable"
+        },
+        "h2_connections": {
+          "type": "integer",
+          "unit": "connections",
+          "semantics": "gauge_sum",
+          "missing": "not_running_or_lock_unavailable"
+        },
+        "pending_tasks": {
+          "type": "integer",
+          "unit": "tasks",
+          "semantics": "gauge_sum",
+          "missing": "not_running_or_lock_unavailable"
+        },
+        "requests_succeeded_total": {
+          "type": "integer",
+          "unit": "requests",
+          "semantics": "counter",
+          "missing": "not_running"
+        },
+        "requests_failed_total": {
+          "type": "integer",
+          "unit": "requests",
+          "semantics": "counter",
+          "missing": "not_running"
+        },
+        "rtt_seconds_total": {
+          "type": "number",
+          "unit": "seconds",
+          "semantics": "counter",
+          "missing": "not_running"
+        },
+        "rtt_observations_total": {
+          "type": "integer",
+          "unit": "requests",
+          "semantics": "counter",
+          "missing": "not_running"
+        },
+        "connection_pools": {
+          "type": "integer",
+          "unit": "pools",
+          "semantics": "gauge",
+          "missing": "not_running_or_lock_unavailable"
+        },
+        "connections_creating": {
+          "type": "integer",
+          "unit": "connections",
+          "semantics": "gauge",
+          "missing": "not_running_or_lock_unavailable"
+        },
+        "no_available_ip_total": {
+          "type": "integer",
+          "unit": "events",
+          "semantics": "counter",
+          "missing": "not_running"
+        },
+        "request_retries_total": {
+          "type": "integer",
+          "unit": "events",
+          "semantics": "counter",
+          "missing": "not_running"
+        },
+        "response_failures_total": {
+          "type": "integer",
+          "unit": "events",
+          "semantics": "counter",
+          "missing": "not_running"
+        },
+        "body_timeouts_total": {
+          "type": "integer",
+          "unit": "events",
+          "semantics": "counter",
+          "missing": "not_running"
+        },
+        "protocol_errors_total": {
+          "type": "integer",
+          "unit": "events",
+          "semantics": "counter",
+          "missing": "not_running"
+        },
+        "generation_drops_total": {
+          "type": "integer",
+          "unit": "events",
+          "semantics": "counter",
+          "missing": "not_running"
+        }
+      },
+      "description": "按 gae/direct/cloudflare/cloudfront 固定类别聚合的 Front 指标；不得出现实际目标、IP 或 trace。"
+    },
+    "process.threads": {
+      "type": "integer",
+      "unit": "threads",
+      "semantics": "gauge",
+      "missing": "unsupported_platform_or_query_failed",
+      "description": "当前进程线程数。"
+    },
+    "process.rss_bytes": {
+      "type": "integer",
+      "unit": "bytes",
+      "semantics": "gauge",
+      "missing": "unsupported_platform_or_query_failed",
+      "description": "当前进程常驻内存。"
+    },
+    "process.cpu_time_seconds": {
+      "type": "number",
+      "unit": "seconds",
+      "semantics": "counter_external",
+      "missing": "unsupported_platform_or_query_failed",
+      "description": "操作系统报告的进程用户态与内核态 CPU 累计时间。"
+    },
+    "process.fd_count": {
+      "type": "integer",
+      "unit": "file_descriptors",
+      "semantics": "gauge",
+      "missing": "unsupported_platform_or_query_failed",
+      "description": "当前进程打开的文件描述符数。"
+    },
+    "process.fd_soft_limit": {
+      "type": "integer",
+      "unit": "file_descriptors",
+      "semantics": "gauge",
+      "missing": "unsupported_platform_or_query_failed",
+      "description": "当前进程文件描述符软限制。"
+    },
+    "process.log_queue_length": {
+      "type": "integer",
+      "unit": "records",
+      "semantics": "gauge",
+      "missing": "logger_not_initialized_or_lock_unavailable",
+      "description": "日志持久化队列当前长度。"
+    },
+    "process.log_dropped_total": {
+      "type": "integer",
+      "unit": "records",
+      "semantics": "counter",
+      "missing": "never",
+      "description": "进程级日志丢弃记录数。"
+    },
+    "process.log_write_failures_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "never",
+      "description": "进程级日志持久写入失败数。"
+    },
+    "process.log_throttled_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "never",
+      "description": "进程级 throttle 抑制日志事件数。"
+    },
+    "process.background_exceptions_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "never",
+      "description": "已接入运行指标的后台未捕获异常数；未接入线程不能据此宣称全覆盖。"
+    },
+    "process.unknown_stops_total": {
+      "type": "integer",
+      "unit": "events",
+      "semantics": "counter",
+      "missing": "never",
+      "description": "已接入模块的未知原因停止次数。"
+    }
+  }
+}

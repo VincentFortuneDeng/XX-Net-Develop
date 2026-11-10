@@ -1,0 +1,38 @@
+test_ssl_enqueue_and_timeout_share_one_delivery_boundary (__main__.ConnectManagerLifecycleTest.test_ssl_enqueue_and_timeout_share_one_delivery_boundary) ... ok
+test_stop_closes_pool_and_late_connection (__main__.ConnectManagerLifecycleTest.test_stop_closes_pool_and_late_connection) ... ok
+test_timed_out_connect_closes_late_ssl_socket (__main__.ConnectManagerLifecycleTest.test_timed_out_connect_closes_late_ssl_socket) ... ok
+test_direct_front_stop_cannot_miss_gated_dispatcher_creation (__main__.DirectFrontLifecycleTest.test_direct_front_stop_cannot_miss_gated_dispatcher_creation) ... ok
+test_running_direct_front_reuses_dispatcher_and_serves_request (__main__.DirectFrontLifecycleTest.test_running_direct_front_reuses_dispatcher_and_serves_request) ... ok
+test_stopped_direct_front_rejects_lazy_dispatcher_and_request (__main__.DirectFrontLifecycleTest.test_stopped_direct_front_rejects_lazy_dispatcher_and_request) ... ok
+test_dns_handler_limit_rejects_excess_inflight_work (__main__.DnsServerLifecycleTest.test_dns_handler_limit_rejects_excess_inflight_work) ... ok
+test_dns_healthy_listener_starts_and_stops (__main__.DnsServerLifecycleTest.test_dns_healthy_listener_starts_and_stops) ... ok
+test_dns_stop_joins_inflight_handler_before_returning (__main__.DnsServerLifecycleTest.test_dns_stop_joins_inflight_handler_before_returning) ... ok
+test_dns_without_listener_raises_and_closes_every_socket (__main__.DnsServerLifecycleTest.test_dns_without_listener_raises_and_closes_every_socket) ... ok
+test_background_start_failure_is_returned_and_retryable (__main__.LauncherLifecycleTest.test_background_start_failure_is_returned_and_retryable) ... ok
+test_gae_front_init_clears_missing_module_publication (__main__.LauncherLifecycleTest.test_gae_front_init_clears_missing_module_publication) ... ok
+test_module_api_iteration_tolerates_concurrent_stop (__main__.LauncherLifecycleTest.test_module_api_iteration_tolerates_concurrent_stop) ... ok
+test_smart_router_start_clears_stopped_x_tunnel_reference (__main__.LauncherLifecycleTest.test_smart_router_start_clears_stopped_x_tunnel_reference) ... ok
+test_stop_during_start_cannot_leave_unregistered_ready_module (__main__.LauncherLifecycleTest.test_stop_during_start_cannot_leave_unregistered_ready_module) ... ok
+test_web_control_stop_before_server_creation_is_a_noop (__main__.LauncherLifecycleTest.test_web_control_stop_before_server_creation_is_a_noop) ... ok
+test_x_tunnel_toggle_restarts_running_smart_router (__main__.LauncherLifecycleTest.test_x_tunnel_toggle_restarts_running_smart_router) ... ok
+test_gae_front_start_failure_rolls_back_partial_startup (__main__.ListenerStartupTest.test_gae_front_start_failure_rolls_back_partial_startup) ... ok
+test_gae_healthy_listener_still_serves (__main__.ListenerStartupTest.test_gae_healthy_listener_still_serves) ... ok
+test_gae_ready_requires_successful_listen_and_rolls_back (__main__.ListenerStartupTest.test_gae_ready_requires_successful_listen_and_rolls_back) ... ok
+test_x_tunnel_all_ports_failed_never_ready_or_serves (__main__.ListenerStartupTest.test_x_tunnel_all_ports_failed_never_ready_or_serves) ... ok
+test_x_tunnel_healthy_listener_still_serves (__main__.ListenerStartupTest.test_x_tunnel_healthy_listener_still_serves) ... ok
+
+----------------------------------------------------------------------
+Ran 22 tests in 1.779s
+
+OK
+
+test_admin_refusal_still_stops_headless_process (__main__.MacTrayQuitTest.test_admin_refusal_still_stops_headless_process) ... ok
+test_concurrent_quit_during_authorization_does_not_prompt_again (__main__.MacTrayQuitTest.test_concurrent_quit_during_authorization_does_not_prompt_again) ... ok
+test_duplicate_quit_does_not_repeat_proxy_cleanup (__main__.MacTrayQuitTest.test_duplicate_quit_does_not_repeat_proxy_cleanup) ... ok
+test_headless_quit_uses_detected_service_without_admin_or_ui (__main__.MacTrayQuitTest.test_headless_quit_uses_detected_service_without_admin_or_ui) ... ok
+test_normal_menu_disable_still_saves_and_updates_ui (__main__.MacTrayQuitTest.test_normal_menu_disable_still_saves_and_updates_ui) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.007s
+
+OK

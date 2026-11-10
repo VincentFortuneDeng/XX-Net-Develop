@@ -1,0 +1,114 @@
+test_direct_publish_failure_closes_remote (__main__.SmartRouterHandoffTest.test_direct_publish_failure_closes_remote) ... ok
+test_direct_send_failure_closes_remote_without_publishing (__main__.SmartRouterHandoffTest.test_direct_send_failure_closes_remote_without_publishing) ... ok
+test_direct_sendall_forwards_entire_prefix (__main__.SmartRouterHandoffTest.test_direct_sendall_forwards_entire_prefix) ... ok
+test_redirect_send_failure_closes_tls_remote (__main__.SmartRouterHandoffTest.test_redirect_send_failure_closes_tls_remote) ... ok
+test_redirect_sendall_forwards_entire_prefix (__main__.SmartRouterHandoffTest.test_redirect_sendall_forwards_entire_prefix) ... ok
+test_redirect_tls_wrap_failure_closes_remote (__main__.SmartRouterHandoffTest.test_redirect_tls_wrap_failure_closes_remote) ... ok
+test_unwrap_failed_prefix_send_closes_remote_without_publishing (__main__.SmartRouterHandoffTest.test_unwrap_failed_prefix_send_closes_remote_without_publishing) ... ok
+test_unwrap_publish_failure_closes_remote_and_preserves_local_owner (__main__.SmartRouterHandoffTest.test_unwrap_publish_failure_closes_remote_and_preserves_local_owner) ... ok
+test_unwrap_sendall_forwards_entire_prefix_before_pipe_publish (__main__.SmartRouterHandoffTest.test_unwrap_sendall_forwards_entire_prefix_before_pipe_publish) ... ok
+test_unwrap_transfers_buffered_request_body_after_headers (__main__.SmartRouterHandoffTest.test_unwrap_transfers_buffered_request_body_after_headers) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.001s
+
+OK
+
+test_buffered_payload_closes_pair_when_write_registration_fails (__main__.PipeSocksConditionRaceTest.test_buffered_payload_closes_pair_when_write_registration_fails) ... 2026-11-09 13:11:03.994 [smart_router][ERROR] try_add e:OSError('injected write modify failure')
+2026-11-09 13:11:03.995 [smart_router][ERROR] Except stack:Traceback (most recent call last):
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/smart_router/local/pipe_socks.py", line 138, in try_add
+    self.select2.modify(s, selectors.EVENT_WRITE | selectors.EVENT_READ)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<repo>/tests/test_pipe_socks_condition_race.py", line 217, in modify
+    raise OSError("injected write modify failure")
+OSError: injected write modify failure
+
+2026-11-09 13:11:03.995 [smart_router][DEBUG] example.com[192.0.2.1]:443 close
+2026-11-09 13:11:03.995 [smart_router][DEBUG] pipe close [127.0.0.1]:12345->example.com[192.0.2.1]:443 run_time:0.00 upload:8(1)->0(1) download:0(0)->0(0), by remote:1, server left:8 client left:0 e:'write_register'
+2026-11-09 13:11:03.995 [smart_router][DEBUG] SNI:example.com fail.
+2026-11-09 13:11:04.002 [smart_router][INFO] pipe stopped.
+ok
+test_first_connection_added_before_wait_is_not_stranded (__main__.PipeSocksConditionRaceTest.test_first_connection_added_before_wait_is_not_stranded) ... 2026-11-09 13:11:04.002 [smart_router][DEBUG] [127.0.0.1]:12345 close
+2026-11-09 13:11:04.002 [smart_router][DEBUG] pipe close [127.0.0.1]:12345->example.com[192.0.2.1]:443 run_time:0.00 upload:1(1)->1(1) download:0(0)->0(0), by remote:0, server left:0 client left:0 e:'stop'
+2026-11-09 13:11:04.002 [smart_router][DEBUG] example.com[192.0.2.1]:443 close
+2026-11-09 13:11:04.002 [smart_router][DEBUG] pipe close [127.0.0.1]:12345->example.com[192.0.2.1]:443 run_time:0.00 upload:1(1)->1(1) download:0(0)->0(0), by remote:1, server left:0 client left:0 e:'stop'
+2026-11-09 13:11:04.002 [smart_router][DEBUG] SNI:example.com fail.
+2026-11-09 13:11:09.004 [smart_router][INFO] pipe stopped.
+ok
+test_registration_failure_rolls_back_whole_pair (__main__.PipeSocksConditionRaceTest.test_registration_failure_rolls_back_whole_pair) ... 2026-11-09 13:11:09.005 [smart_router][ERROR] try_add e:OSError('register failed')
+2026-11-09 13:11:09.006 [smart_router][ERROR] Except stack:Traceback (most recent call last):
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/smart_router/local/pipe_socks.py", line 133, in try_add
+    self.select2.register(s, selectors.EVENT_READ)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<repo>/tests/test_pipe_socks_condition_race.py", line 174, in register
+    raise OSError("register failed")
+OSError: register failed
+
+2026-11-09 13:11:09.006 [smart_router][ERROR] try_add e:OSError('register failed')
+2026-11-09 13:11:09.007 [smart_router][ERROR] Except stack:Traceback (most recent call last):
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/smart_router/local/pipe_socks.py", line 133, in try_add
+    self.select2.register(s, selectors.EVENT_READ)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<repo>/tests/test_pipe_socks_condition_race.py", line 174, in register
+    raise OSError("register failed")
+OSError: register failed
+
+ok
+test_select_failure_makes_pipe_unpublishable_and_cleans_membership (__main__.PipeSocksConditionRaceTest.test_select_failure_makes_pipe_unpublishable_and_cleans_membership) ... 2026-11-09 13:11:09.007 [smart_router][ERROR] pipe select except:ValueError('detached selector')
+2026-11-09 13:11:09.007 [smart_router][ERROR] Except stack:Traceback (most recent call last):
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/smart_router/local/pipe_socks.py", line 261, in pipe
+    events = self.select2.select(timeout=5)
+  File "<repo>/tests/test_pipe_socks_condition_race.py", line 137, in <lambda>
+    select=lambda timeout: (_ for _ in ()).throw(ValueError("detached selector")))
+                           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<repo>/tests/test_pipe_socks_condition_race.py", line 137, in <genexpr>
+    select=lambda timeout: (_ for _ in ()).throw(ValueError("detached selector")))
+ValueError: detached selector
+
+ok
+test_select_oserror_also_stops_and_cleans_membership (__main__.PipeSocksConditionRaceTest.test_select_oserror_also_stops_and_cleans_membership) ... 2026-11-09 13:11:09.007 [smart_router][ERROR] pipe select except:OSError('selector failed')
+2026-11-09 13:11:09.008 [smart_router][ERROR] Except stack:Traceback (most recent call last):
+  File "<repo>/Coding/XX-Net-5.16.7.1/code/default/smart_router/local/pipe_socks.py", line 261, in pipe
+    events = self.select2.select(timeout=5)
+  File "<repo>/tests/test_pipe_socks_condition_race.py", line 150, in <lambda>
+    select=lambda timeout: (_ for _ in ()).throw(OSError("selector failed")))
+                           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<repo>/tests/test_pipe_socks_condition_race.py", line 150, in <genexpr>
+    select=lambda timeout: (_ for _ in ()).throw(OSError("selector failed")))
+OSError: selector failed
+
+ok
+test_stopped_pipe_rejects_and_closes_new_pair (__main__.PipeSocksConditionRaceTest.test_stopped_pipe_rejects_and_closes_new_pair) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 5.014s
+
+OK
+
+test_ssl_enqueue_and_timeout_share_one_delivery_boundary (__main__.ConnectManagerLifecycleTest.test_ssl_enqueue_and_timeout_share_one_delivery_boundary) ... ok
+test_stop_closes_pool_and_late_connection (__main__.ConnectManagerLifecycleTest.test_stop_closes_pool_and_late_connection) ... ok
+test_timed_out_connect_closes_late_ssl_socket (__main__.ConnectManagerLifecycleTest.test_timed_out_connect_closes_late_ssl_socket) ... ok
+test_direct_front_stop_cannot_miss_gated_dispatcher_creation (__main__.DirectFrontLifecycleTest.test_direct_front_stop_cannot_miss_gated_dispatcher_creation) ... ok
+test_running_direct_front_reuses_dispatcher_and_serves_request (__main__.DirectFrontLifecycleTest.test_running_direct_front_reuses_dispatcher_and_serves_request) ... ok
+test_stopped_direct_front_rejects_lazy_dispatcher_and_request (__main__.DirectFrontLifecycleTest.test_stopped_direct_front_rejects_lazy_dispatcher_and_request) ... ok
+test_dns_handler_limit_rejects_excess_inflight_work (__main__.DnsServerLifecycleTest.test_dns_handler_limit_rejects_excess_inflight_work) ... ok
+test_dns_healthy_listener_starts_and_stops (__main__.DnsServerLifecycleTest.test_dns_healthy_listener_starts_and_stops) ... ok
+test_dns_stop_joins_inflight_handler_before_returning (__main__.DnsServerLifecycleTest.test_dns_stop_joins_inflight_handler_before_returning) ... ok
+test_dns_without_listener_raises_and_closes_every_socket (__main__.DnsServerLifecycleTest.test_dns_without_listener_raises_and_closes_every_socket) ... ok
+test_background_start_failure_is_returned_and_retryable (__main__.LauncherLifecycleTest.test_background_start_failure_is_returned_and_retryable) ... ok
+test_gae_front_init_clears_missing_module_publication (__main__.LauncherLifecycleTest.test_gae_front_init_clears_missing_module_publication) ... ok
+test_module_api_iteration_tolerates_concurrent_stop (__main__.LauncherLifecycleTest.test_module_api_iteration_tolerates_concurrent_stop) ... ok
+test_smart_router_start_clears_stopped_x_tunnel_reference (__main__.LauncherLifecycleTest.test_smart_router_start_clears_stopped_x_tunnel_reference) ... ok
+test_stop_during_start_cannot_leave_unregistered_ready_module (__main__.LauncherLifecycleTest.test_stop_during_start_cannot_leave_unregistered_ready_module) ... ok
+test_web_control_stop_before_server_creation_is_a_noop (__main__.LauncherLifecycleTest.test_web_control_stop_before_server_creation_is_a_noop) ... ok
+test_x_tunnel_toggle_restarts_running_smart_router (__main__.LauncherLifecycleTest.test_x_tunnel_toggle_restarts_running_smart_router) ... ok
+test_gae_front_start_failure_rolls_back_partial_startup (__main__.ListenerStartupTest.test_gae_front_start_failure_rolls_back_partial_startup) ... ok
+test_gae_healthy_listener_still_serves (__main__.ListenerStartupTest.test_gae_healthy_listener_still_serves) ... ok
+test_gae_ready_requires_successful_listen_and_rolls_back (__main__.ListenerStartupTest.test_gae_ready_requires_successful_listen_and_rolls_back) ... ok
+test_x_tunnel_all_ports_failed_never_ready_or_serves (__main__.ListenerStartupTest.test_x_tunnel_all_ports_failed_never_ready_or_serves) ... ok
+test_x_tunnel_healthy_listener_still_serves (__main__.ListenerStartupTest.test_x_tunnel_healthy_listener_still_serves) ... ok
+
+----------------------------------------------------------------------
+Ran 22 tests in 1.779s
+
+OK
